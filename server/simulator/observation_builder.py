@@ -1,0 +1,459 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from models import (
+    ACTION_KIND_VALUES,
+    ArtifactCard,
+    BioMedObservation,
+    BioMedVisibleState,
+    ExpertMessage,
+    LatestOutput,
+)
+from server.simulator.latent_state import LatentEpisodeState
+from server.simulator.transition import (
+    TransitionArtifact,
+    TransitionEffect,
+    TransitionExpertReply,
+)
+
+
+@dataclass(frozen=True)
+class ObservationBundle:
+    """
+    Convenience bundle returned by the observation builder.
+
+    The environment can use:
+    - bundle.observation as the public reset()/step() result
+    - bundle.visible_state to update its current state()
+    """
+
+    observation: BioMedObservation
+    visible_state: BioMedVisibleState
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def _quality_to_uncertainty(quality_score: float | None) -> float | None:
+    """
+    Convert effect quality into a coarse uncertainty estimate for the public output.
+
+    This is deliberately simple for Phase 2:
+    - higher quality => lower uncertainty
+    - lower quality => higher uncertainty
+    """
+    if quality_score is None:
+        return None
+    return round(_clamp(1.0 - quality_score, 0.05, 0.95), 4)
+
+
+def _validate_legal_actions(legal_next_actions: list[str] | None) -> list[str]:
+    if legal_next_actions is None:
+        return []
+    if not isinstance(legal_next_actions, list):
+        raise TypeError(
+            f"legal_next_actions must be a list[str] or None, got {type(legal_next_actions).__name__}"
+        )
+
+    validated: list[str] = []
+    for item in legal_next_actions:
+        if not isinstance(item, str):
+            raise TypeError(f"legal_next_actions must contain strings, got {type(item).__name__}")
+        if item not in ACTION_KIND_VALUES:
+            raise ValueError(f"Unknown action in legal_next_actions: {item!r}")
+        validated.append(item)
+
+    return validated
+
+
+def _public_task_summary(state: LatentEpisodeState) -> str:
+    """
+    Build a visible task summary for the current episode.
+
+    This may reflect the public task framing, but it should not reveal hidden truth
+    such as exact bottleneck flags or the best intervention family.
+    """
+    base = (
+        "You are leading a PET bioremediation program under limited budget and time. "
+        "Your job is to gather evidence, decide what matters most, and submit the best "
+        "next program decision."
+    )
+
+    if state.scenario_family == "high_crystallinity":
+        return (
+            base
+            + " Investigate whether feedstock accessibility and preprocessing matter more "
+            + "than aggressive route switching."
+        )
+    if state.scenario_family == "thermostability_bottleneck":
+        return (
+            base
+            + " Investigate whether nominal route promise holds up under realistic operating conditions."
+        )
+    if state.scenario_family == "contamination_artifact":
+        return (
+            base
+            + " Investigate whether the observed evidence is trustworthy or distorted by sample-quality issues."
+        )
+
+    return base
+
+
+def _stage_label(state: LatentEpisodeState) -> str:
+    return state.progress.stage
+
+
+def _build_visible_state(state: LatentEpisodeState) -> BioMedVisibleState:
+    """
+    Build the public state() payload.
+
+    This intentionally contains only visible episode metadata, never hidden truth.
+    """
+    common_fields: dict[str, Any] = {
+        "episode_id": state.episode_id,
+        "step_count": state.step_count,
+    }
+
+    return BioMedVisibleState(
+        scenario_family=state.scenario_family,
+        difficulty=state.difficulty,
+        stage=state.progress.stage,
+        spent_budget=round(state.resources.budget_spent, 2),
+        spent_time_days=state.resources.time_spent_days,
+        completed_milestones=list(state.progress.completed_milestones),
+        history_length=len(state.history),
+        **common_fields,
+    )
+
+
+def _build_latest_output(effect: TransitionEffect | None) -> LatestOutput | None:
+    """
+    Convert the most recent internal transition effect into the public latest_output.
+    """
+    if effect is None:
+        return None
+
+    return LatestOutput(
+        output_type=effect.effect_type,
+        summary=effect.summary,
+        success=effect.success,
+        quality_score=effect.quality_score,
+        uncertainty=_quality_to_uncertainty(effect.quality_score),
+        data=dict(effect.data),
+    )
+
+
+def _artifact_from_transition_artifact(item: TransitionArtifact) -> ArtifactCard:
+    return ArtifactCard(
+        artifact_id=item.artifact_id,
+        artifact_type=item.artifact_type,
+        title=item.title,
+        summary=item.summary,
+        data=dict(item.data),
+    )
+
+
+def _expert_message_from_transition_reply(item: TransitionExpertReply) -> ExpertMessage:
+    return ExpertMessage(
+        expert_id=item.expert_id,
+        summary=item.summary,
+        confidence=item.confidence,
+        priority=item.priority,
+    )
+
+
+def _build_inspection_artifact(state: LatentEpisodeState, value: dict[str, Any]) -> ArtifactCard:
+    return ArtifactCard(
+        artifact_id=f"{state.episode_id}:artifact:feedstock_inspection",
+        artifact_type="inspection_note",
+        title="Feedstock inspection note",
+        summary=(
+            "Initial feedstock inspection recorded coarse physical hints "
+            "about accessibility, contamination, and crystallinity."
+        ),
+        data=dict(value),
+    )
+
+
+def _build_literature_artifacts(
+    state: LatentEpisodeState,
+    value: dict[str, Any],
+) -> list[ArtifactCard]:
+    primary_note = value.get("primary_note", "")
+    caveat_note = value.get("caveat_note", "")
+
+    artifacts: list[ArtifactCard] = []
+
+    if isinstance(primary_note, str) and primary_note.strip():
+        artifacts.append(
+            ArtifactCard(
+                artifact_id=f"{state.episode_id}:artifact:literature_primary",
+                artifact_type="literature_note",
+                title="Primary evidence note",
+                summary=primary_note,
+                data={"relevance": "high"},
+            )
+        )
+
+    if isinstance(caveat_note, str) and caveat_note.strip():
+        artifacts.append(
+            ArtifactCard(
+                artifact_id=f"{state.episode_id}:artifact:literature_caveat",
+                artifact_type="literature_note",
+                title="Caveat note",
+                summary=caveat_note,
+                data={"relevance": "medium"},
+            )
+        )
+
+    return artifacts
+
+
+def _build_candidate_artifacts(
+    state: LatentEpisodeState,
+    value: list[dict[str, Any]],
+) -> list[ArtifactCard]:
+    artifacts: list[ArtifactCard] = []
+
+    for idx, card in enumerate(value):
+        candidate_family = card.get("candidate_family", f"candidate_{idx}")
+        display_name = card.get("display_name", candidate_family)
+        summary = (
+            f"Estimated visible potential: {card.get('visible_potential_band', 'unknown')}; "
+            f"cost band: {card.get('cost_band', 'unknown')}; "
+            f"temperature tolerance: {card.get('temperature_tolerance_band', 'unknown')}."
+        )
+
+        artifacts.append(
+            ArtifactCard(
+                artifact_id=f"{state.episode_id}:artifact:candidate:{candidate_family}",
+                artifact_type="candidate_card",
+                title=str(display_name),
+                summary=summary,
+                data=dict(card),
+            )
+        )
+
+    return artifacts
+
+
+def _build_assay_artifact(state: LatentEpisodeState, value: dict[str, Any]) -> ArtifactCard:
+    family = value.get("candidate_family", "unknown_route")
+    return ArtifactCard(
+        artifact_id=f"{state.episode_id}:artifact:assay:{family}",
+        artifact_type="assay_report",
+        title="Hydrolysis assay report",
+        summary="Latest structured assay result for the selected remediation route.",
+        data=dict(value),
+    )
+
+
+def _build_expert_artifact(
+    state: LatentEpisodeState,
+    expert_id: str,
+    value: dict[str, Any],
+) -> ArtifactCard:
+    return ArtifactCard(
+        artifact_id=f"{state.episode_id}:artifact:expert:{expert_id}",
+        artifact_type="expert_note",
+        title=f"Expert note: {expert_id}",
+        summary=f"Guidance captured from expert actor '{expert_id}'.",
+        data=dict(value),
+    )
+
+
+def _build_decision_artifact(state: LatentEpisodeState, value: dict[str, Any]) -> ArtifactCard:
+    return ArtifactCard(
+        artifact_id=f"{state.episode_id}:artifact:decision",
+        artifact_type="decision_note",
+        title="Program decision",
+        summary=value.get("decision_summary", "Program decision submitted."),
+        data=dict(value),
+    )
+
+
+def _build_artifacts_from_discoveries(state: LatentEpisodeState) -> list[ArtifactCard]:
+    """
+    Build the cumulative visible artifact list from the latent discoveries ledger.
+
+    This is important because the observation should show persistent visible work products,
+    not only the most recent effect.
+    """
+    discoveries = state.progress.discoveries
+    artifacts: list[ArtifactCard] = []
+
+    if "feedstock_inspection" in discoveries and isinstance(
+        discoveries["feedstock_inspection"], dict
+    ):
+        artifacts.append(_build_inspection_artifact(state, discoveries["feedstock_inspection"]))
+
+    if "literature_summary" in discoveries and isinstance(discoveries["literature_summary"], dict):
+        artifacts.extend(_build_literature_artifacts(state, discoveries["literature_summary"]))
+
+    if "candidate_shortlist" in discoveries and isinstance(
+        discoveries["candidate_shortlist"], list
+    ):
+        artifacts.extend(_build_candidate_artifacts(state, discoveries["candidate_shortlist"]))
+
+    if "last_hydrolysis_assay" in discoveries and isinstance(
+        discoveries["last_hydrolysis_assay"], dict
+    ):
+        artifacts.append(_build_assay_artifact(state, discoveries["last_hydrolysis_assay"]))
+
+    for key, value in discoveries.items():
+        if key.startswith("expert_reply:") and isinstance(value, dict):
+            expert_id = key.split(":", 1)[1]
+            artifacts.append(_build_expert_artifact(state, expert_id, value))
+
+    if "submitted_program_decision" in discoveries and isinstance(
+        discoveries["submitted_program_decision"], dict
+    ):
+        artifacts.append(_build_decision_artifact(state, discoveries["submitted_program_decision"]))
+
+    return artifacts
+
+
+def _dedupe_artifacts(items: list[ArtifactCard]) -> list[ArtifactCard]:
+    deduped: dict[str, ArtifactCard] = {}
+    for item in items:
+        deduped[item.artifact_id] = item
+    return list(deduped.values())
+
+
+def _sort_artifacts(items: list[ArtifactCard]) -> list[ArtifactCard]:
+    return sorted(items, key=lambda x: (x.artifact_type, x.artifact_id))
+
+
+def _build_expert_inbox_from_discoveries(state: LatentEpisodeState) -> list[ExpertMessage]:
+    discoveries = state.progress.discoveries
+    messages: list[ExpertMessage] = []
+
+    for key, value in discoveries.items():
+        if not key.startswith("expert_reply:") or not isinstance(value, dict):
+            continue
+
+        expert_id = key.split(":", 1)[1]
+        summary = value.get("summary")
+        if not isinstance(summary, str) or not summary.strip():
+            suggested_next = value.get("suggested_next", "no suggestion recorded")
+            summary = f"Stored expert guidance. Suggested next focus: {suggested_next}"
+
+        confidence = value.get("confidence")
+        if not isinstance(confidence, (int, float)):
+            confidence = None
+
+        messages.append(
+            ExpertMessage(
+                expert_id=expert_id,
+                summary=summary,
+                confidence=confidence,
+                priority="medium",
+            )
+        )
+
+    return messages
+
+
+def _build_terminal_warnings(state: LatentEpisodeState) -> list[str]:
+    warnings: list[str] = []
+
+    if state.done_reason == "resources_exhausted":
+        warnings.append("Episode terminated because budget or time was exhausted.")
+    elif state.done_reason == "step_limit_reached":
+        warnings.append("Episode terminated because the step limit was reached.")
+    elif state.done_reason == "program_decision_submitted":
+        warnings.append("Episode terminated after the final program decision was submitted.")
+
+    return warnings
+
+
+class BioMedObservationBuilder:
+    """
+    Builds public BioMed observations and visible state objects from latent state
+    plus the latest transition effect.
+
+    This is the Step 6 equivalent of the reference repo's output-generation layer,
+    adapted to BioMed's public Observation/State contract.
+    """
+
+    def build_reset_bundle(
+        self,
+        state: LatentEpisodeState,
+        *,
+        legal_next_actions: list[str] | None = None,
+        task_summary: str | None = None,
+    ) -> ObservationBundle:
+        validated_actions = _validate_legal_actions(legal_next_actions)
+        visible_state = _build_visible_state(state)
+
+        observation = BioMedObservation(
+            task_summary=task_summary or _public_task_summary(state),
+            stage=_stage_label(state),
+            latest_output=None,
+            artifacts=_sort_artifacts(_build_artifacts_from_discoveries(state)),
+            expert_inbox=_build_expert_inbox_from_discoveries(state),
+            budget_remaining=round(state.resources.budget_remaining, 2),
+            time_remaining_days=state.resources.time_remaining_days,
+            legal_next_actions=validated_actions,
+            warnings=[],
+            done_reason=state.done_reason,
+            metadata={
+                "episode_id": state.episode_id,
+                "difficulty": state.difficulty,
+            },
+        )
+        return ObservationBundle(observation=observation, visible_state=visible_state)
+
+    def build_step_bundle(
+        self,
+        state: LatentEpisodeState,
+        effect: TransitionEffect,
+        *,
+        legal_next_actions: list[str] | None = None,
+        task_summary: str | None = None,
+        extra_warnings: list[str] | None = None,
+    ) -> ObservationBundle:
+        validated_actions = _validate_legal_actions(legal_next_actions)
+        visible_state = _build_visible_state(state)
+
+        cumulative_artifacts = _build_artifacts_from_discoveries(state)
+        effect_artifacts = [_artifact_from_transition_artifact(item) for item in effect.artifacts]
+        artifacts = _sort_artifacts(_dedupe_artifacts(cumulative_artifacts + effect_artifacts))
+
+        cumulative_experts = _build_expert_inbox_from_discoveries(state)
+        latest_experts = [
+            _expert_message_from_transition_reply(item) for item in effect.expert_replies
+        ]
+
+        expert_map: dict[str, ExpertMessage] = {
+            f"{msg.expert_id}:{msg.summary}": msg for msg in cumulative_experts
+        }
+        for msg in latest_experts:
+            expert_map[f"{msg.expert_id}:{msg.summary}"] = msg
+
+        warnings = list(effect.warnings)
+        if extra_warnings:
+            warnings.extend(extra_warnings)
+        warnings.extend(_build_terminal_warnings(state))
+
+        observation = BioMedObservation(
+            task_summary=task_summary or _public_task_summary(state),
+            stage=_stage_label(state),
+            latest_output=_build_latest_output(effect),
+            artifacts=artifacts,
+            expert_inbox=list(expert_map.values()),
+            budget_remaining=round(state.resources.budget_remaining, 2),
+            time_remaining_days=state.resources.time_remaining_days,
+            legal_next_actions=validated_actions,
+            warnings=warnings,
+            done_reason=state.done_reason,
+            metadata={
+                "episode_id": state.episode_id,
+                "difficulty": state.difficulty,
+                "latest_effect_type": effect.effect_type,
+            },
+        )
+        return ObservationBundle(observation=observation, visible_state=visible_state)

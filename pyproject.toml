@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bioremed-foundry"
+version = "0.1.0"
+description = "OpenEnv environment for PET bioremediation planning"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "openenv-core[core]>=0.2.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "pytest-asyncio",
+  "ruff",
+  "mypy",
+]
+
+[tool.setuptools]
+packages = ["bioMed", "bioMed.server"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
