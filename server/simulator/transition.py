@@ -20,6 +20,24 @@ TransitionEffectType = Literal[
 ]
 
 
+ACTION_COSTS: dict[str, dict[str, float | int]] = {
+    "inspect_feedstock": {"budget": 2.0, "time_days": 1},
+    "measure_crystallinity": {"budget": 5.0, "time_days": 1},
+    "measure_contamination": {"budget": 4.0, "time_days": 1},
+    "estimate_particle_size": {"budget": 3.0, "time_days": 1},
+    "query_literature": {"budget": 1.0, "time_days": 0},
+    "query_candidate_registry": {"budget": 1.0, "time_days": 0},
+    "estimate_stability_signal": {"budget": 2.0, "time_days": 0},
+    "run_hydrolysis_assay": {"budget": 15.0, "time_days": 3},
+    "run_thermostability_assay": {"budget": 12.0, "time_days": 2},
+    "test_pretreatment": {"budget": 10.0, "time_days": 2},
+    "test_cocktail": {"budget": 14.0, "time_days": 3},
+    "ask_expert": {"budget": 1.0, "time_days": 0},
+    "state_hypothesis": {"budget": 0.0, "time_days": 0},
+    "finalize_recommendation": {"budget": 0.0, "time_days": 0},
+}
+
+
 @dataclass
 class TransitionArtifact:
     artifact_id: str

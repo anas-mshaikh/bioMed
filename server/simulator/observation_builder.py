@@ -11,6 +11,7 @@ from models import (
     ExpertMessage,
     LatestOutput,
 )
+from server.rules.types import RuleDecision
 from server.simulator.latent_state import LatentEpisodeState
 from server.simulator.transition import (
     TransitionArtifact,
@@ -162,6 +163,27 @@ def _expert_message_from_transition_reply(item: TransitionExpertReply) -> Expert
         summary=item.summary,
         confidence=item.confidence,
         priority=item.priority,
+    )
+
+
+def build_invalid_action_observation(
+    self,
+    *,
+    latent: LatentEpisodeState,
+    decision: RuleDecision,
+    legal_next_actions: list[str],
+) -> BioMedObservation:
+    return BioMedObservation(
+        task_summary=latent.task_summary,
+        stage=latent.stage,
+        latest_outputs=[],
+        artifacts=list(latent.artifacts),
+        expert_inbox=[],
+        budget_remaining=max(0.0, latent.budget_total - latent.budget_spent),
+        time_remaining_days=max(0, latent.time_total_days - latent.time_spent_days),
+        legal_next_actions=legal_next_actions,
+        warnings=decision.as_observation_messages(),
+        done_reason=None,
     )
 
 

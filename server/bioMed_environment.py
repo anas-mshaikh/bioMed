@@ -1,107 +1,129 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
-
-"""
-Biomed Environment Implementation.
-
-A simple test environment that echoes back messages sent to it.
-Perfect for testing HTTP server infrastructure.
-"""
+from __future__ import annotations
 
 from uuid import uuid4
 
-from openenv.core.env_server.interfaces import Environment
-from openenv.core.env_server.types import State
-
-try:
-    from ..models import BiomedAction, BiomedObservation
-except ImportError:
-    from models import BiomedAction, BiomedObservation
-
-from server.simulator import BioMedObservationBuilder, BioMedTransitionEngine
-from server.tasks.scenarios import sample_episode_latent_state
+from models import BioMedAction, BioMedObservation, BioMedVisibleState, StepResult
+from server.observation_builder import ObservationBuilder
+from server.rewards import RewardComputer
+from server.rules import RuleEngine
+from server.scenarios import sample_episode_latent_state
+from server.transition_engine import TransitionEngine
 
 
-class BiomedEnvironment(Environment):
-    """
-    A simple echo environment that echoes back messages.
+class BioMedEnvironment:
+    SUPPORTS_CONCURRENT_SESSIONS = True
 
-    This environment is designed for testing the HTTP server infrastructure.
-    It maintains minimal state and simply echoes back whatever message it receives.
+    def __init__(self) -> None:
+        self.rule_engine = RuleEngine()
+        self.transition_engine = TransitionEngine()
+        self.reward_computer = RewardComputer()
+        self.observation_builder = ObservationBuilder()
 
-    Example:
-        >>> env = BiomedEnvironment()
-        >>> obs = env.reset()
-        >>> print(obs.echoed_message)  # "Biomed environment ready!"
-        >>>
-        >>> obs = env.step(BiomedAction(message="Hello"))
-        >>> print(obs.echoed_message)  # "Hello"
-        >>> print(obs.message_length)  # 5
-    """
+        self._episode_id: str | None = None
+        self._step_count: int = 0
+        self._latent = None
 
-    # Enable concurrent WebSocket sessions.
-    # Set to True if your environment isolates state between instances.
-    # When True, multiple WebSocket clients can connect simultaneously, each
-    # getting their own environment instance (when using factory mode in app.py).
-    SUPPORTS_CONCURRENT_SESSIONS: bool = True
+    def reset(
+        self,
+        seed: int | None = None,
+        scenario_family: str | None = None,
+        difficulty: str | None = None,
+    ) -> BioMedObservation:
+        resolved_seed = 0 if seed is None else seed
+        self._episode_id = str(uuid4())
+        self._step_count = 0
+        self._latent = sample_episode_latent_state(
+            seed=resolved_seed,
+            scenario_family=scenario_family or "high_crystallinity",
+            difficulty=difficulty or "easy",
+        )
+        self._latent.episode_id = self._episode_id
 
-    def __init__(self):
-        """Initialize the bioMed environment."""
-        self._state = State(episode_id=str(uuid4()), step_count=0)
-        self._reset_count = 0
+        initial_observation = self.observation_builder.build_initial_observation(
+            latent=self._latent,
+            legal_next_actions=self.rule_engine.get_legal_next_actions(self._latent),
+        )
+        return initial_observation
 
-    def reset(self) -> BiomedObservation:
-        """
-        Reset the environment.
+    def step(self, action: BioMedAction) -> StepResult:
+        if self._latent is None:
+            raise RuntimeError("Call reset() before step().")
 
-        Returns:
-            BiomedObservation with a ready message
-        """
-        self._state = State(episode_id=str(uuid4()), step_count=0)
-        self._reset_count += 1
+        self._step_count += 1
 
-        return BiomedObservation(
-            echoed_message="Biomed environment ready!",
-            message_length=0,
-            done=False,
-            reward=0.0,
+        rule_result = self.rule_engine.validate_action(self._latent, action)
+
+        if rule_result.hard_violations:
+            reward = self.reward_computer.invalid_action_penalty(
+                hard_messages=rule_result.hard_messages,
+                soft_messages=rule_result.soft_messages,
+            )
+            observation = self.observation_builder.build_invalid_action_observation(
+                latent=self._latent,
+                decision=rule_result.decision,
+                legal_next_actions=self.rule_engine.get_legal_next_actions(self._latent),
+            )
+            return StepResult(
+                observation=observation,
+                reward=reward.total,
+                done=False,
+                info={
+                    "rule_code": rule_result.decision.rule_code,
+                    "hard_violations": rule_result.hard_messages,
+                    "soft_violations": rule_result.soft_messages,
+                    "reward_breakdown": reward.to_dict(),
+                },
+            )
+
+        prev_latent = self._latent.model_copy(deep=True)
+
+        transition_result = self.transition_engine.step(
+            latent=self._latent,
+            action=action,
+            soft_violation_messages=rule_result.soft_messages,
+        )
+        self._latent = transition_result.next_latent
+
+        reward = self.reward_computer.step_reward(
+            action=action,
+            prev_latent=prev_latent,
+            next_latent=self._latent,
+            transition_result=transition_result,
+            soft_messages=rule_result.soft_messages,
         )
 
-    def step(self, action: BiomedAction) -> BiomedObservation:  # type: ignore[override]
-        """
-        Execute a step in the environment by echoing the message.
-
-        Args:
-            action: BiomedAction containing the message to echo
-
-        Returns:
-            BiomedObservation with the echoed message and its length
-        """
-        self._state.step_count += 1
-
-        message = action.message
-        length = len(message)
-
-        # Simple reward: longer messages get higher rewards
-        reward = length * 0.1
-
-        return BiomedObservation(
-            echoed_message=message,
-            message_length=length,
-            done=False,
-            reward=reward,
-            metadata={"original_message": message, "step": self._state.step_count},
+        legal_next_actions = self.rule_engine.get_legal_next_actions(self._latent)
+        observation = self.observation_builder.build_post_action_observation(
+            latent=self._latent,
+            transition_result=transition_result,
+            legal_next_actions=legal_next_actions,
+            warnings=rule_result.decision.as_observation_messages(),
         )
 
-    @property
-    def state(self) -> State:
-        """
-        Get the current environment state.
+        return StepResult(
+            observation=observation,
+            reward=reward.total,
+            done=self._latent.done,
+            info={
+                "rule_code": rule_result.decision.rule_code,
+                "hard_violations": rule_result.hard_messages,
+                "soft_violations": rule_result.soft_messages,
+                "reward_breakdown": reward.to_dict(),
+            },
+        )
 
-        Returns:
-            Current State with episode_id and step_count
-        """
-        return self._state
+    def state(self) -> BioMedVisibleState:
+        if self._latent is None:
+            raise RuntimeError("Call reset() before state().")
+
+        return BioMedVisibleState(
+            episode_id=self._episode_id or "",
+            step_count=self._step_count,
+            scenario_family=self._latent.scenario_family,
+            difficulty=self._latent.difficulty,
+            stage=self._latent.stage,
+            spent_budget=self._latent.budget_spent,
+            spent_time_days=self._latent.time_spent_days,
+            completed_milestones=[k for k, v in self._latent.discoveries.items() if bool(v)],
+            history_length=len(self._latent.history),
+        )
