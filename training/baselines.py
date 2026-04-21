@@ -27,6 +27,9 @@ def _observation_text(observation: Any) -> str:
             parts.append(value)
         elif isinstance(value, list):
             parts.extend([str(v) for v in value])
+    latest_output = _obs_get(observation, "latest_output")
+    if latest_output is not None:
+        parts.append(str(latest_output))
     latest_outputs = _obs_get(observation, "latest_outputs", [])
     if isinstance(latest_outputs, list):
         for item in latest_outputs:
@@ -123,7 +126,7 @@ def _choose_expert(observation: Any, trajectory: Any) -> str:
     if "cost" in text or "scale" in text or "pilot" in text:
         return "process_engineer"
     if _count_taken(trajectory, "ask_expert") > 0:
-        return "sustainability_reviewer"
+        return "cost_reviewer"
     return "wet_lab_lead"
 
 

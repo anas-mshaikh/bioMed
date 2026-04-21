@@ -290,7 +290,7 @@ class StepRewardEngine:
                 return self.config.expert_management_weight
             return -0.04
 
-        if expert_id == "sustainability_reviewer":
+        if expert_id == "cost_reviewer":
             if evidence_count >= 2:
                 return self.config.expert_management_weight * 0.8
             return -0.02

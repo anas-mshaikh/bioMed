@@ -175,9 +175,9 @@ def _build_invalid_action_observation(
     return BioMedObservation(
         task_summary=_public_task_summary(state),
         stage=_stage_label(state),
-        latest_outputs=[],
+        latest_output=None,
         artifacts=_sort_artifacts(_build_artifacts_from_discoveries(state)),
-        expert_inbox=[],
+        expert_inbox=_build_expert_inbox_from_discoveries(state),
         budget_remaining=round(state.resources.budget_remaining, 2),
         time_remaining_days=state.resources.time_remaining_days,
         legal_next_actions=legal_next_actions,

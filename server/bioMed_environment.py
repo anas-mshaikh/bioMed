@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from uuid import uuid4
 
 from models import BioMedAction, BioMedObservation, BioMedVisibleState
@@ -65,15 +66,9 @@ class BioMedEnvironment:
                 observation=observation,
                 reward=reward_breakdown.total,
                 done=False,
-                info={
-                    "reward_breakdown": reward_breakdown.to_dict(),
-                    "rule_code": rule_result.decision.rule_code,
-                    "hard_violations": rule_result.hard_messages,
-                    "soft_violations": rule_result.soft_messages,
-                },
             )
 
-        prev_latent = self._latent.model_copy(deep=True)
+        prev_latent = deepcopy(self._latent)
 
         transition_result = self.transition_engine.step(
             state=self._latent,
@@ -109,12 +104,6 @@ class BioMedEnvironment:
             observation=observation.observation,
             reward=reward_breakdown.total,
             done=self._latent.done,
-            info={
-                "reward_breakdown": reward_breakdown.to_dict(),
-                "rule_code": rule_result.decision.rule_code,
-                "hard_violations": rule_result.hard_messages,
-                "soft_violations": rule_result.soft_messages,
-            },
         )
 
     def state(self) -> BioMedVisibleState:

@@ -38,6 +38,29 @@ def test_unknown_action_is_hard_invalid():
     assert result.decision.rule_code == "UNKNOWN_ACTION"
 
 
+def test_biomed_action_accepts_top_level_expert_id():
+    action = BioMedAction(
+        action_kind="ask_expert",
+        expert_id="wet_lab_lead",
+        parameters={},
+        rationale="",
+        confidence=None,
+    )
+
+    assert action.expert_id == "wet_lab_lead"
+
+
+def test_biomed_action_allows_unknown_action_kind_at_model_layer():
+    action = BioMedAction(
+        action_kind="future_action_kind",
+        parameters={},
+        rationale="",
+        confidence=None,
+    )
+
+    assert action.action_kind == "future_action_kind"
+
+
 def test_cocktail_without_context_is_hard_invalid():
     latent = sample_episode_latent_state(
         seed=7,

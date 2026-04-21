@@ -44,7 +44,7 @@ class RuleEngine:
             "computational_biologist",
             "wet_lab_lead",
             "process_engineer",
-            "sustainability_reviewer",
+            "cost_reviewer",
         }
     )
 

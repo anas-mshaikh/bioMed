@@ -22,7 +22,6 @@ ACTION_KIND_VALUES = (
     "ask_expert",
     "state_hypothesis",
     "finalize_recommendation",
-    "submit_program_decision",
 )
 ActionKind = str
 
@@ -164,6 +163,7 @@ class BioMedAction(Action):
     """
 
     action_kind: ActionKind
+    expert_id: str | None = None
     parameters: dict[str, Any] = Field(default_factory=dict)
     rationale: str = ""
     confidence: float | None = None
@@ -171,6 +171,10 @@ class BioMedAction(Action):
     def model_post_init(self, __context: Any) -> None:
         if not isinstance(self.action_kind, str) or not self.action_kind.strip():
             raise ValueError("action_kind must be a non-empty string")
+        if self.expert_id is not None and (
+            not isinstance(self.expert_id, str) or not self.expert_id.strip()
+        ):
+            raise ValueError("expert_id must be None or a non-empty string")
         if not isinstance(self.parameters, dict):
             raise TypeError(f"parameters must be a dict, got {type(self.parameters).__name__}")
         if not isinstance(self.rationale, str):

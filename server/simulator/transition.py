@@ -92,12 +92,8 @@ class TransitionResult:
 
 
 ACTION_RESOURCE_COSTS: dict[str, tuple[float, int]] = {
-    "inspect_feedstock": (4.0, 1),
-    "query_literature": (2.0, 0),
-    "query_candidate_registry": (3.0, 0),
-    "run_hydrolysis_assay": (18.0, 3),
-    "ask_expert": (1.0, 0),
-    "submit_program_decision": (0.0, 0),
+    action_kind: (float(costs["budget"]), int(costs["time_days"]))
+    for action_kind, costs in ACTION_COSTS.items()
 }
 
 
@@ -166,6 +162,12 @@ def _bool_param(action: BioMedAction, key: str, default: bool = False) -> bool:
 def _string_param(action: BioMedAction, key: str, default: str = "") -> str:
     value = action.parameters.get(key, default)
     return value if isinstance(value, str) else default
+
+
+def _expert_id(action: BioMedAction, default: str = "wet_lab_lead") -> str:
+    if isinstance(action.expert_id, str) and action.expert_id.strip():
+        return action.expert_id
+    return _string_param(action, "expert_id", default=default)
 
 
 class BioMedTransitionEngine:
@@ -280,7 +282,7 @@ class BioMedTransitionEngine:
         if soft_v:
             effect = self._apply_soft_violation_penalty(effect, soft_v)
 
-        if action.action_kind == "submit_program_decision" and not s.done:
+        if action.action_kind == "finalize_recommendation" and not s.done:
             s.mark_done("program_decision_submitted")
 
         if s.should_force_terminal() and not s.done:
@@ -304,11 +306,19 @@ class BioMedTransitionEngine:
     def _resolve_handler(self, action_kind: str):
         handlers = {
             "inspect_feedstock": self._handle_inspect_feedstock,
+            "measure_crystallinity": self._handle_measure_crystallinity,
+            "measure_contamination": self._handle_measure_contamination,
+            "estimate_particle_size": self._handle_estimate_particle_size,
             "query_literature": self._handle_query_literature,
             "query_candidate_registry": self._handle_query_candidate_registry,
+            "estimate_stability_signal": self._handle_estimate_stability_signal,
             "run_hydrolysis_assay": self._handle_run_hydrolysis_assay,
+            "run_thermostability_assay": self._handle_run_thermostability_assay,
+            "test_pretreatment": self._handle_test_pretreatment,
+            "test_cocktail": self._handle_test_cocktail,
             "ask_expert": self._handle_ask_expert,
-            "submit_program_decision": self._handle_submit_program_decision,
+            "state_hypothesis": self._handle_state_hypothesis,
+            "finalize_recommendation": self._handle_finalize_recommendation,
         }
         if action_kind not in handlers:
             raise ValueError(f"No transition handler registered for {action_kind!r}")
@@ -353,6 +363,7 @@ class BioMedTransitionEngine:
             "crystallinity_hint": crystallinity_hint,
         }
 
+        s.progress.record_discovery("feedstock_inspected", True)
         s.progress.record_discovery("feedstock_inspection", inspection_data)
         s.append_history(
             action_kind="inspect_feedstock",
@@ -381,6 +392,132 @@ class BioMedTransitionEngine:
                 )
             ],
             data=inspection_data,
+            budget_delta=budget_delta,
+            time_delta_days=time_delta_days,
+        )
+
+    def _handle_measure_crystallinity(
+        self,
+        s: LatentEpisodeState,
+        action: BioMedAction,
+        *,
+        budget_delta: float,
+        time_delta_days: int,
+    ) -> TransitionEffect:
+        s.progress.stage = "triage"
+        measured_band = s.substrate_truth.crystallinity_band
+        measurement = {
+            "crystallinity_band": measured_band,
+            "confidence_band": _score_to_label(_band_to_score(measured_band)),
+        }
+        s.progress.record_discovery("crystallinity_measured", True)
+        s.progress.record_discovery("crystallinity_measurement", measurement)
+        s.append_history(
+            action_kind="measure_crystallinity",
+            summary=f"Measured crystallinity as {measured_band}.",
+            budget_delta=budget_delta,
+            time_delta_days=time_delta_days,
+            metadata=measurement,
+        )
+        return TransitionEffect(
+            effect_type="inspection",
+            summary=f"Measured feedstock crystallinity as {measured_band}.",
+            success=True,
+            quality_score=0.9,
+            artifacts=[
+                TransitionArtifact(
+                    artifact_id=f"{s.episode_id}:crystallinity:{s.step_count}",
+                    artifact_type="inspection_note",
+                    title="Crystallinity measurement",
+                    summary="Measured PET crystallinity band from characterized feedstock.",
+                    data=measurement,
+                )
+            ],
+            data=measurement,
+            budget_delta=budget_delta,
+            time_delta_days=time_delta_days,
+        )
+
+    def _handle_measure_contamination(
+        self,
+        s: LatentEpisodeState,
+        action: BioMedAction,
+        *,
+        budget_delta: float,
+        time_delta_days: int,
+    ) -> TransitionEffect:
+        s.progress.stage = "triage"
+        contamination_band = s.substrate_truth.contamination_band
+        measurement = {
+            "contamination_band": contamination_band,
+            "cleanup_priority": "high" if contamination_band == "high" else "medium",
+        }
+        s.progress.record_discovery("contamination_measured", True)
+        s.progress.record_discovery("contamination_measurement", measurement)
+        s.append_history(
+            action_kind="measure_contamination",
+            summary=f"Measured contamination as {contamination_band}.",
+            budget_delta=budget_delta,
+            time_delta_days=time_delta_days,
+            metadata=measurement,
+        )
+        return TransitionEffect(
+            effect_type="inspection",
+            summary=f"Measured feedstock contamination as {contamination_band}.",
+            success=True,
+            quality_score=0.89,
+            artifacts=[
+                TransitionArtifact(
+                    artifact_id=f"{s.episode_id}:contamination:{s.step_count}",
+                    artifact_type="inspection_note",
+                    title="Contamination measurement",
+                    summary="Measured contamination band for the current PET sample.",
+                    data=measurement,
+                )
+            ],
+            data=measurement,
+            budget_delta=budget_delta,
+            time_delta_days=time_delta_days,
+        )
+
+    def _handle_estimate_particle_size(
+        self,
+        s: LatentEpisodeState,
+        action: BioMedAction,
+        *,
+        budget_delta: float,
+        time_delta_days: int,
+    ) -> TransitionEffect:
+        s.progress.stage = "triage"
+        particle_size_band = s.substrate_truth.particle_size_band
+        estimate = {
+            "particle_size_band": particle_size_band,
+            "accessibility_hint": "higher" if particle_size_band == "small" else "lower",
+        }
+        s.progress.record_discovery("particle_size_estimated", True)
+        s.progress.record_discovery("particle_size_estimate", estimate)
+        s.append_history(
+            action_kind="estimate_particle_size",
+            summary=f"Estimated particle size as {particle_size_band}.",
+            budget_delta=budget_delta,
+            time_delta_days=time_delta_days,
+            metadata=estimate,
+        )
+        return TransitionEffect(
+            effect_type="inspection",
+            summary=f"Estimated particle size band as {particle_size_band}.",
+            success=True,
+            quality_score=0.86,
+            artifacts=[
+                TransitionArtifact(
+                    artifact_id=f"{s.episode_id}:particle-size:{s.step_count}",
+                    artifact_type="inspection_note",
+                    title="Particle size estimate",
+                    summary="Estimated PET particle size band from current sample context.",
+                    data=estimate,
+                )
+            ],
+            data=estimate,
             budget_delta=budget_delta,
             time_delta_days=time_delta_days,
         )
@@ -420,6 +557,7 @@ class BioMedTransitionEngine:
             "caveat_note": caveat_note,
         }
 
+        s.progress.record_discovery("literature_reviewed", True)
         s.progress.record_discovery("literature_summary", literature_data)
         s.append_history(
             action_kind="query_literature",
@@ -515,6 +653,7 @@ class BioMedTransitionEngine:
                 )
             )
 
+        s.progress.record_discovery("candidate_registry_queried", True)
         s.progress.record_discovery("candidate_shortlist", shortlist)
         s.append_history(
             action_kind="query_candidate_registry",
@@ -537,6 +676,55 @@ class BioMedTransitionEngine:
                 "shortlist_size": len(shortlist),
                 "top_candidates": shortlist[:3],
             },
+            budget_delta=budget_delta,
+            time_delta_days=time_delta_days,
+        )
+
+    def _handle_estimate_stability_signal(
+        self,
+        s: LatentEpisodeState,
+        action: BioMedAction,
+        *,
+        budget_delta: float,
+        time_delta_days: int,
+    ) -> TransitionEffect:
+        s.progress.stage = "triage"
+        truth = s.intervention_truth
+        stability_score = 0.78 if truth.best_intervention_family == "thermostable_single" else 0.42
+        if truth.thermostability_bottleneck:
+            stability_score -= 0.12
+        stability_score = round(_clamp(stability_score + s.uniform(-0.05, 0.05), 0.05, 0.95), 4)
+        signal = {
+            "stability_signal_score": stability_score,
+            "stability_signal_band": _score_to_label(stability_score),
+            "thermostability_risk": truth.thermostability_bottleneck,
+        }
+        s.progress.record_discovery("stability_signal_estimated", True)
+        s.progress.record_discovery("stability_signal", signal)
+        s.append_history(
+            action_kind="estimate_stability_signal",
+            summary="Estimated coarse thermostability signal from registry context.",
+            budget_delta=budget_delta,
+            time_delta_days=time_delta_days,
+            metadata=signal,
+        )
+        return TransitionEffect(
+            effect_type="candidate_registry",
+            summary=(
+                "Estimated a coarse thermostability signal from candidate evidence."
+            ),
+            success=True,
+            quality_score=0.77,
+            artifacts=[
+                TransitionArtifact(
+                    artifact_id=f"{s.episode_id}:stability-signal:{s.step_count}",
+                    artifact_type="candidate_card",
+                    title="Stability signal estimate",
+                    summary="Derived a coarse thermostability signal for the current candidate space.",
+                    data=signal,
+                )
+            ],
+            data=signal,
             budget_delta=budget_delta,
             time_delta_days=time_delta_days,
         )
@@ -647,6 +835,7 @@ class BioMedTransitionEngine:
             ),
         }
 
+        s.progress.record_discovery("activity_assay_run", True)
         s.progress.record_discovery("last_hydrolysis_assay", assay_data)
         s.append_history(
             action_kind="run_hydrolysis_assay",
@@ -684,6 +873,146 @@ class BioMedTransitionEngine:
             time_delta_days=time_delta_days,
         )
 
+    def _handle_run_thermostability_assay(
+        self,
+        s: LatentEpisodeState,
+        action: BioMedAction,
+        *,
+        budget_delta: float,
+        time_delta_days: int,
+    ) -> TransitionEffect:
+        s.progress.stage = "assay"
+        truth = s.intervention_truth
+        base_score = 0.8 if not truth.thermostability_bottleneck else 0.38
+        if truth.best_intervention_family == "thermostable_single":
+            base_score += 0.16
+        observed_retention = round(_clamp(base_score + s.uniform(-0.08, 0.08), 0.02, 0.98), 4)
+        assay_data = {
+            "retention_fraction": observed_retention,
+            "interpretation": _score_to_label(observed_retention),
+            "thermostability_bottleneck_risk": truth.thermostability_bottleneck,
+        }
+        s.progress.record_discovery("thermostability_assay_run", True)
+        s.progress.record_discovery("thermostability_assay", assay_data)
+        s.append_history(
+            action_kind="run_thermostability_assay",
+            summary="Ran thermostability assay on the current candidate context.",
+            budget_delta=budget_delta,
+            time_delta_days=time_delta_days,
+            metadata=assay_data,
+        )
+        return TransitionEffect(
+            effect_type="assay",
+            summary=(
+                f"Thermostability assay observed {observed_retention:.2f} retention under stress."
+            ),
+            success=True,
+            quality_score=0.83,
+            artifacts=[
+                TransitionArtifact(
+                    artifact_id=f"{s.episode_id}:thermostability:{s.step_count}",
+                    artifact_type="assay_report",
+                    title="Thermostability assay report",
+                    summary="Measured thermostability retention for the candidate set.",
+                    data=assay_data,
+                )
+            ],
+            data=assay_data,
+            budget_delta=budget_delta,
+            time_delta_days=time_delta_days,
+        )
+
+    def _handle_test_pretreatment(
+        self,
+        s: LatentEpisodeState,
+        action: BioMedAction,
+        *,
+        budget_delta: float,
+        time_delta_days: int,
+    ) -> TransitionEffect:
+        s.progress.stage = "assay"
+        sensitivity = _band_to_score(s.substrate_truth.pretreatment_sensitivity)
+        uplift = round(_clamp(0.12 + (0.28 * sensitivity) + s.uniform(-0.05, 0.05), 0.0, 0.95), 4)
+        assay_data = {
+            "pretreatment_uplift": uplift,
+            "pretreatment_sensitivity_band": s.substrate_truth.pretreatment_sensitivity,
+            "interpretation": "worth pursuing" if uplift >= 0.25 else "limited benefit",
+        }
+        s.progress.record_discovery("pretreatment_tested", True)
+        s.progress.record_discovery("pretreatment_result", assay_data)
+        s.append_history(
+            action_kind="test_pretreatment",
+            summary="Tested pretreatment leverage against the current PET context.",
+            budget_delta=budget_delta,
+            time_delta_days=time_delta_days,
+            metadata=assay_data,
+        )
+        return TransitionEffect(
+            effect_type="assay",
+            summary=f"Pretreatment test suggests an uplift of {uplift:.2f} over baseline.",
+            success=True,
+            quality_score=0.81,
+            artifacts=[
+                TransitionArtifact(
+                    artifact_id=f"{s.episode_id}:pretreatment:{s.step_count}",
+                    artifact_type="assay_report",
+                    title="Pretreatment test report",
+                    summary="Measured pretreatment leverage for the current substrate.",
+                    data=assay_data,
+                )
+            ],
+            data=assay_data,
+            budget_delta=budget_delta,
+            time_delta_days=time_delta_days,
+        )
+
+    def _handle_test_cocktail(
+        self,
+        s: LatentEpisodeState,
+        action: BioMedAction,
+        *,
+        budget_delta: float,
+        time_delta_days: int,
+    ) -> TransitionEffect:
+        s.progress.stage = "assay"
+        truth = s.intervention_truth
+        synergy_score = 0.76 if truth.synergy_required else 0.34
+        if truth.best_intervention_family == "cocktail":
+            synergy_score += 0.10
+        synergy_score = round(_clamp(synergy_score + s.uniform(-0.07, 0.07), 0.01, 0.98), 4)
+        assay_data = {
+            "synergy_score": synergy_score,
+            "synergy_required": truth.synergy_required,
+            "interpretation": "strong synergy" if synergy_score >= 0.65 else "weak synergy",
+        }
+        s.progress.record_discovery("cocktail_tested", True)
+        s.progress.record_discovery("cocktail_result", assay_data)
+        s.append_history(
+            action_kind="test_cocktail",
+            summary="Tested cocktail synergy against the current route shortlist.",
+            budget_delta=budget_delta,
+            time_delta_days=time_delta_days,
+            metadata=assay_data,
+        )
+        return TransitionEffect(
+            effect_type="assay",
+            summary=f"Cocktail test indicates {assay_data['interpretation']}.",
+            success=True,
+            quality_score=0.8,
+            artifacts=[
+                TransitionArtifact(
+                    artifact_id=f"{s.episode_id}:cocktail:{s.step_count}",
+                    artifact_type="assay_report",
+                    title="Cocktail test report",
+                    summary="Compared mixture synergy against single-route expectations.",
+                    data=assay_data,
+                )
+            ],
+            data=assay_data,
+            budget_delta=budget_delta,
+            time_delta_days=time_delta_days,
+        )
+
     def _handle_ask_expert(
         self,
         s: LatentEpisodeState,
@@ -692,7 +1021,7 @@ class BioMedTransitionEngine:
         budget_delta: float,
         time_delta_days: int,
     ) -> TransitionEffect:
-        expert_id = _string_param(action, "expert_id", default="wet_lab_lead")
+        expert_id = _expert_id(action, default="wet_lab_lead")
         belief = s.expert_beliefs.get(expert_id)
 
         if belief is None:
@@ -770,6 +1099,9 @@ class BioMedTransitionEngine:
             "blind_spot": belief.blind_spot,
         }
 
+        expert_data["summary"] = summary
+        expert_data["confidence"] = belief.confidence_bias
+        s.progress.record_discovery("expert_consulted", True)
         s.progress.record_discovery(f"expert_reply:{expert_id}", expert_data)
         s.append_history(
             action_kind="ask_expert",
@@ -802,7 +1134,7 @@ class BioMedTransitionEngine:
             time_delta_days=time_delta_days,
         )
 
-    def _handle_submit_program_decision(
+    def _handle_state_hypothesis(
         self,
         s: LatentEpisodeState,
         action: BioMedAction,
@@ -810,20 +1142,61 @@ class BioMedTransitionEngine:
         budget_delta: float,
         time_delta_days: int,
     ) -> TransitionEffect:
-        proposed_intervention_family = _string_param(
+        s.progress.stage = "decision"
+        hypothesis = _string_param(
             action,
-            "proposed_intervention_family",
-            default="unspecified",
+            "hypothesis",
+            default=action.rationale.strip() or "Hypothesis recorded without added detail.",
         )
-        claimed_bottleneck = _string_param(
-            action,
-            "claimed_bottleneck",
-            default="unspecified",
+        hypothesis_data = {"hypothesis": hypothesis}
+        s.progress.record_discovery("hypothesis_stated", True)
+        s.progress.record_discovery("latest_hypothesis", hypothesis_data)
+        s.append_history(
+            action_kind="state_hypothesis",
+            summary="Recorded a working BioMed hypothesis.",
+            budget_delta=budget_delta,
+            time_delta_days=time_delta_days,
+            metadata=hypothesis_data,
         )
-        decision_summary = _string_param(
-            action,
-            "decision_summary",
-            default=action.rationale.strip() or "Program decision submitted.",
+        return TransitionEffect(
+            effect_type="decision",
+            summary="Recorded a working hypothesis for the current case.",
+            success=True,
+            quality_score=0.74,
+            artifacts=[
+                TransitionArtifact(
+                    artifact_id=f"{s.episode_id}:hypothesis:{s.step_count}",
+                    artifact_type="decision_note",
+                    title="Working hypothesis",
+                    summary=hypothesis,
+                    data=hypothesis_data,
+                )
+            ],
+            data=hypothesis_data,
+            budget_delta=budget_delta,
+            time_delta_days=time_delta_days,
+        )
+
+    def _handle_finalize_recommendation(
+        self,
+        s: LatentEpisodeState,
+        action: BioMedAction,
+        *,
+        budget_delta: float,
+        time_delta_days: int,
+    ) -> TransitionEffect:
+        recommendation = action.parameters.get("recommendation", {})
+        if not isinstance(recommendation, dict):
+            recommendation = {}
+        proposed_intervention_family = str(
+            recommendation.get("recommended_family", "unspecified")
+        )
+        claimed_bottleneck = str(recommendation.get("primary_bottleneck", "unspecified"))
+        decision = str(recommendation.get("decision", "proceed"))
+        decision_summary = str(
+            recommendation.get("rationale")
+            or action.rationale.strip()
+            or "Program decision submitted."
         )
 
         s.progress.stage = "decision"
@@ -834,18 +1207,20 @@ class BioMedTransitionEngine:
             {
                 "proposed_intervention_family": proposed_intervention_family,
                 "claimed_bottleneck": claimed_bottleneck,
+                "decision": decision,
                 "decision_summary": decision_summary,
             },
         )
 
         s.append_history(
-            action_kind="submit_program_decision",
+            action_kind="finalize_recommendation",
             summary="Submitted final BioMed program decision.",
             budget_delta=budget_delta,
             time_delta_days=time_delta_days,
             metadata={
                 "proposed_intervention_family": proposed_intervention_family,
                 "claimed_bottleneck": claimed_bottleneck,
+                "decision": decision,
             },
         )
 
@@ -863,12 +1238,14 @@ class BioMedTransitionEngine:
                     data={
                         "proposed_intervention_family": proposed_intervention_family,
                         "claimed_bottleneck": claimed_bottleneck,
+                        "decision": decision,
                     },
                 )
             ],
             data={
                 "proposed_intervention_family": proposed_intervention_family,
                 "claimed_bottleneck": claimed_bottleneck,
+                "decision": decision,
                 "decision_summary": decision_summary,
             },
             budget_delta=budget_delta,
