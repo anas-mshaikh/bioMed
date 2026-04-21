@@ -1,0 +1,8 @@
+{
+  "scenario_family": "custom_no_go_fixture",
+  "difficulty": "easy",
+  "expectations": {
+    "best_intervention_family": "no_go",
+    "artifact_risk_floor": 0.5
+  }
+}

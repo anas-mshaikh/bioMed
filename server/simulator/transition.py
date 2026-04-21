@@ -1211,6 +1211,7 @@ class BioMedTransitionEngine:
                 "decision_summary": decision_summary,
             },
         )
+        s.progress.record_discovery("final_decision_submitted", True)
 
         s.append_history(
             action_kind="finalize_recommendation",

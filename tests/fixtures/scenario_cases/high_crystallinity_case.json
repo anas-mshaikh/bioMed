@@ -1,0 +1,8 @@
+{
+  "scenario_family": "high_crystallinity",
+  "difficulty": "easy",
+  "expectations": {
+    "min_high_crystallinity_count": 8,
+    "sample_size": 12
+  }
+}

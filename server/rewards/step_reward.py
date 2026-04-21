@@ -75,7 +75,7 @@ class StepRewardEngine:
         if rule_result.hard_violations:
             return self.invalid_action_penalty(rule_result)
 
-        output = getattr(transition_result, "output", None)
+        output = getattr(transition_result, "effect", None)
         action_kind = getattr(action, "action_kind", "")
 
         rb.validity = self._validity_score(output)

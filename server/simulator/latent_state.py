@@ -362,6 +362,13 @@ class LatentEpisodeState:
         return self.progress.completed_milestones
 
     @property
+    def catalyst_truth(self) -> LatentInterventionTruth:
+        """
+        Compatibility alias for older reward/evaluation code.
+        """
+        return self.intervention_truth
+
+    @property
     def budget_total(self) -> float:
         return self.resources.budget_total
 

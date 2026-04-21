@@ -18,7 +18,7 @@ def build_environment() -> BioMedEnvironment:
 
 
 env = build_environment()
-app = create_fastapi_app(env, BioMedAction, BioMedObservation)
+app = create_fastapi_app(lambda: env, BioMedAction, BioMedObservation)
 
 
 def main() -> None:

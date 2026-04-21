@@ -26,7 +26,10 @@ def _state_dict(env: Any) -> dict[str, Any] | None:
     if not hasattr(env, "state"):
         return None
     try:
-        return to_serializable(env.state())
+        state_attr = env.state
+        if callable(state_attr):
+            return to_serializable(state_attr())
+        return to_serializable(state_attr)
     except Exception:
         return None
 

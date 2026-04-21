@@ -106,6 +106,7 @@ class BioMedEnvironment:
             done=self._latent.done,
         )
 
+    @property
     def state(self) -> BioMedVisibleState:
         if self._latent is None:
             raise RuntimeError("Call reset() before state().")
@@ -121,3 +122,35 @@ class BioMedEnvironment:
             completed_milestones=[k for k, v in self._latent.discoveries.items() if bool(v)],
             history_length=len(self._latent.history),
         )
+
+    def close(self) -> None:
+        return None
+
+    async def reset_async(
+        self,
+        seed: int | None = None,
+        episode_id: str | None = None,
+        **kwargs: object,
+    ) -> BioMedObservation:
+        return self.reset(
+            seed=seed,
+            scenario_family=kwargs.get("scenario_family") if isinstance(kwargs.get("scenario_family"), str) else None,
+            difficulty=kwargs.get("difficulty") if isinstance(kwargs.get("difficulty"), str) else None,
+        )
+
+    async def step_async(
+        self,
+        action: BioMedAction,
+        timeout_s: float | None = None,
+        **kwargs: object,
+    ) -> BioMedObservation:
+        result = self.step(action)
+        return result.observation.model_copy(
+            update={
+                "reward": result.reward,
+                "done": result.done,
+            }
+        )
+
+    async def close_async(self) -> None:
+        self.close()

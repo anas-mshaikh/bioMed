@@ -253,6 +253,7 @@ class BioMedVisibleState(State):
                     f"completed_milestones must contain strings, got {type(milestone).__name__}"
                 )
 
+
 __all__ = [
     "ACTION_KIND_VALUES",
     "ARTIFACT_TYPE_VALUES",
