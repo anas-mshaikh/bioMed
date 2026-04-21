@@ -385,15 +385,21 @@ class RuleEngine:
 
         last = history[-1]
         a = action.action_kind
+        last_action_kind = getattr(last, "action_kind", None)
+        if last_action_kind is None and isinstance(last, dict):
+            last_action_kind = last.get("action_kind")
 
-        if last.get("action_kind") == a:
+        if last_action_kind == a:
             if a in {"query_literature", "query_candidate_registry"}:
                 return RuleViolation(
                     rule_code="REDUNDANT_QUERY",
                     severity="soft",
                     message=f"Repeated '{a}' with no intervening evidence may be low value.",
                 )
-            if a == "ask_expert" and last.get("expert_id") == action.expert_id:
+            last_expert_id = getattr(last, "expert_id", None)
+            if last_expert_id is None and isinstance(last, dict):
+                last_expert_id = last.get("expert_id")
+            if a == "ask_expert" and last_expert_id == action.expert_id:
                 return RuleViolation(
                     rule_code="REPEATED_EXPERT_NO_NEW_CONTEXT",
                     severity="soft",

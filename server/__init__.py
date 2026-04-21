@@ -1,7 +1,9 @@
-from .models import bioMedAction, bioMedObservation, bioMedVisibleState
+from .bioMed_environment import BioMedEnvironment
+from models import BioMedAction, BioMedObservation, BioMedVisibleState
 
 __all__ = [
-    "bioMedAction",
-    "bioMedObservation",
-    "bioMedVisibleState",
+    "BioMedAction",
+    "BioMedEnvironment",
+    "BioMedObservation",
+    "BioMedVisibleState",
 ]

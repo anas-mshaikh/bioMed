@@ -166,21 +166,20 @@ def _expert_message_from_transition_reply(item: TransitionExpertReply) -> Expert
     )
 
 
-def build_invalid_action_observation(
-    self,
+def _build_invalid_action_observation(
+    state: LatentEpisodeState,
     *,
-    latent: LatentEpisodeState,
     decision: RuleDecision,
     legal_next_actions: list[str],
 ) -> BioMedObservation:
     return BioMedObservation(
-        task_summary=latent.task_summary,
-        stage=latent.stage,
+        task_summary=_public_task_summary(state),
+        stage=_stage_label(state),
         latest_outputs=[],
-        artifacts=list(latent.artifacts),
+        artifacts=_sort_artifacts(_build_artifacts_from_discoveries(state)),
         expert_inbox=[],
-        budget_remaining=max(0.0, latent.budget_total - latent.budget_spent),
-        time_remaining_days=max(0, latent.time_total_days - latent.time_spent_days),
+        budget_remaining=round(state.resources.budget_remaining, 2),
+        time_remaining_days=state.resources.time_remaining_days,
         legal_next_actions=legal_next_actions,
         warnings=decision.as_observation_messages(),
         done_reason=None,
@@ -479,3 +478,16 @@ class BioMedObservationBuilder:
             },
         )
         return ObservationBundle(observation=observation, visible_state=visible_state)
+
+    def build_invalid_action_observation(
+        self,
+        *,
+        latent: LatentEpisodeState,
+        decision: RuleDecision,
+        legal_next_actions: list[str],
+    ) -> BioMedObservation:
+        return _build_invalid_action_observation(
+            latent,
+            decision=decision,
+            legal_next_actions=legal_next_actions,
+        )

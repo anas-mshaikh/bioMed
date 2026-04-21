@@ -3,25 +3,28 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from pydantic import BaseModel, Field
 from openenv.core.env_server import Action, Observation, State
 
 
 ACTION_KIND_VALUES = (
     "inspect_feedstock",
+    "measure_crystallinity",
+    "measure_contamination",
+    "estimate_particle_size",
     "query_literature",
     "query_candidate_registry",
+    "estimate_stability_signal",
     "run_hydrolysis_assay",
+    "run_thermostability_assay",
+    "test_pretreatment",
+    "test_cocktail",
     "ask_expert",
+    "state_hypothesis",
+    "finalize_recommendation",
     "submit_program_decision",
 )
-ActionKind = Literal[
-    "inspect_feedstock",
-    "query_literature",
-    "query_candidate_registry",
-    "run_hydrolysis_assay",
-    "ask_expert",
-    "submit_program_decision",
-]
+ActionKind = str
 
 STAGE_VALUES = ("intake", "triage", "assay", "decision", "done")
 Stage = Literal["intake", "triage", "assay", "decision", "done"]
@@ -93,15 +96,14 @@ def _validate_non_negative_number(value: float | int, field_name: str) -> None:
         raise ValueError(f"{field_name} must be non-negative, got {value!r}")
 
 
-@dataclass
-class ArtifactCard:
+class ArtifactCard(BaseModel):
     artifact_id: str
     artifact_type: ArtifactType
     title: str
     summary: str
-    data: dict[str, Any] = field(default_factory=dict)
+    data: dict[str, Any] = Field(default_factory=dict)
 
-    def __post_init__(self) -> None:
+    def model_post_init(self, __context: Any) -> None:
         if not self.artifact_id.strip():
             raise ValueError("artifact_id must not be empty")
         if self.artifact_type not in ARTIFACT_TYPE_VALUES:
@@ -116,16 +118,15 @@ class ArtifactCard:
             raise TypeError(f"data must be a dict, got {type(self.data).__name__}")
 
 
-@dataclass
-class LatestOutput:
+class LatestOutput(BaseModel):
     output_type: OutputType
     summary: str
     success: bool
     quality_score: float | None = None
     uncertainty: float | None = None
-    data: dict[str, Any] = field(default_factory=dict)
+    data: dict[str, Any] = Field(default_factory=dict)
 
-    def __post_init__(self) -> None:
+    def model_post_init(self, __context: Any) -> None:
         if self.output_type not in OUTPUT_TYPE_VALUES:
             raise ValueError(
                 f"output_type must be one of {OUTPUT_TYPE_VALUES}, got {self.output_type!r}"
@@ -138,14 +139,13 @@ class LatestOutput:
             raise TypeError(f"data must be a dict, got {type(self.data).__name__}")
 
 
-@dataclass
-class ExpertMessage:
+class ExpertMessage(BaseModel):
     expert_id: ExpertId
     summary: str
     confidence: float | None = None
     priority: Priority = "medium"
 
-    def __post_init__(self) -> None:
+    def model_post_init(self, __context: Any) -> None:
         if self.expert_id not in EXPERT_ID_VALUES:
             raise ValueError(f"expert_id must be one of {EXPERT_ID_VALUES}, got {self.expert_id!r}")
         if not self.summary.strip():
@@ -155,7 +155,6 @@ class ExpertMessage:
             raise ValueError(f"priority must be one of {PRIORITY_VALUES}, got {self.priority!r}")
 
 
-@dataclass
 class BioMedAction(Action):
     """
     Public action contract for BioMed.
@@ -165,15 +164,13 @@ class BioMedAction(Action):
     """
 
     action_kind: ActionKind
-    parameters: dict[str, Any] = field(default_factory=dict)
+    parameters: dict[str, Any] = Field(default_factory=dict)
     rationale: str = ""
     confidence: float | None = None
 
-    def __post_init__(self) -> None:
-        if self.action_kind not in ACTION_KIND_VALUES:
-            raise ValueError(
-                f"action_kind must be one of {ACTION_KIND_VALUES}, got {self.action_kind!r}"
-            )
+    def model_post_init(self, __context: Any) -> None:
+        if not isinstance(self.action_kind, str) or not self.action_kind.strip():
+            raise ValueError("action_kind must be a non-empty string")
         if not isinstance(self.parameters, dict):
             raise TypeError(f"parameters must be a dict, got {type(self.parameters).__name__}")
         if not isinstance(self.rationale, str):
@@ -181,7 +178,6 @@ class BioMedAction(Action):
         _validate_probability(self.confidence, "confidence")
 
 
-@dataclass
 class BioMedObservation(Observation):
     """
     Visible observation returned after reset() and step().
@@ -194,15 +190,15 @@ class BioMedObservation(Observation):
     task_summary: str
     stage: Stage
     latest_output: LatestOutput | None = None
-    artifacts: list[ArtifactCard] = field(default_factory=list)
-    expert_inbox: list[ExpertMessage] = field(default_factory=list)
+    artifacts: list[ArtifactCard] = Field(default_factory=list)
+    expert_inbox: list[ExpertMessage] = Field(default_factory=list)
     budget_remaining: float = 0.0
     time_remaining_days: int = 0
-    legal_next_actions: list[ActionKind] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
+    legal_next_actions: list[ActionKind] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
     done_reason: str | None = None
 
-    def __post_init__(self) -> None:
+    def model_post_init(self, __context: Any) -> None:
         if not self.task_summary.strip():
             raise ValueError("task_summary must not be empty")
         if self.stage not in STAGE_VALUES:
@@ -220,7 +216,6 @@ class BioMedObservation(Observation):
                 raise TypeError(f"warnings must contain strings, got {type(warning).__name__}")
 
 
-@dataclass
 class BioMedVisibleState(State):
     """
     Minimal visible state for state().
@@ -233,10 +228,10 @@ class BioMedVisibleState(State):
     stage: Stage = "intake"
     spent_budget: float = 0.0
     spent_time_days: int = 0
-    completed_milestones: list[str] = field(default_factory=list)
+    completed_milestones: list[str] = Field(default_factory=list)
     history_length: int = 0
 
-    def __post_init__(self) -> None:
+    def model_post_init(self, __context: Any) -> None:
         if not self.scenario_family.strip():
             raise ValueError("scenario_family must not be empty")
         if not self.difficulty.strip():
@@ -253,7 +248,6 @@ class BioMedVisibleState(State):
                 raise TypeError(
                     f"completed_milestones must contain strings, got {type(milestone).__name__}"
                 )
-
 
 __all__ = [
     "ACTION_KIND_VALUES",

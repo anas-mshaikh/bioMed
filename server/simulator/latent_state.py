@@ -349,6 +349,46 @@ class LatentEpisodeState:
     def step_count(self) -> int:
         return self.progress.step_count
 
+    @property
+    def stage(self) -> Stage:
+        return self.progress.stage
+
+    @property
+    def discoveries(self) -> dict[str, Any]:
+        return self.progress.discoveries
+
+    @property
+    def completed_milestones(self) -> list[str]:
+        return self.progress.completed_milestones
+
+    @property
+    def budget_total(self) -> float:
+        return self.resources.budget_total
+
+    @property
+    def budget_spent(self) -> float:
+        return self.resources.budget_spent
+
+    @budget_spent.setter
+    def budget_spent(self, value: float) -> None:
+        self.resources.budget_spent = value
+
+    @property
+    def time_total_days(self) -> int:
+        return self.resources.time_total_days
+
+    @property
+    def time_spent_days(self) -> int:
+        return self.resources.time_spent_days
+
+    @time_spent_days.setter
+    def time_spent_days(self, value: int) -> None:
+        self.resources.time_spent_days = value
+
+    @property
+    def max_steps(self) -> int:
+        return self.resources.max_steps
+
     def append_history(
         self,
         action_kind: str,

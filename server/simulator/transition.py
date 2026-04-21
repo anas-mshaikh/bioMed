@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from models import BioMedAction
-from server.latent import LatentEpisodeState
+from server.simulator.latent_state import LatentEpisodeState
 
 
 TransitionEffectType = Literal[

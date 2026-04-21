@@ -6,11 +6,11 @@
 
 """Biomed Environment."""
 
-from .client import BiomedEnv
-from .models import BiomedAction, BiomedObservation
+from .client import BioMedEnv
+from .models import BioMedAction, BioMedObservation
 
 __all__ = [
-    "BiomedAction",
-    "BiomedObservation",
-    "BiomedEnv",
+    "BioMedAction",
+    "BioMedEnv",
+    "BioMedObservation",
 ]

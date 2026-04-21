@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from random import Random
-from typing import Literal
+from typing import Literal, TypeVar
 from uuid import NAMESPACE_URL, uuid5
 
-from server.latent import (
+from server.simulator.latent_state import (
     ExperimentProgress,
     LatentAssayNoise,
     LatentEpisodeState,
@@ -32,6 +32,8 @@ SUPPORTED_SCENARIO_FAMILIES: tuple[ScenarioFamily, ...] = (
 
 SUPPORTED_DIFFICULTIES: tuple[Difficulty, ...] = ("easy", "medium", "hard")
 
+T = TypeVar("T")
+
 
 def _require_probability(value: float, field_name: str) -> None:
     if not isinstance(value, (int, float)):
@@ -47,7 +49,14 @@ def _require_non_negative(value: float | int, field_name: str) -> None:
         raise ValueError(f"{field_name} must be non-negative, got {value!r}")
 
 
-def _weighted_choice[T](rng: Random, weights: dict[T, float]) -> T:
+def _require_signed_range(value: float | int, field_name: str, *, low: float, high: float) -> None:
+    if not isinstance(value, (int, float)):
+        raise TypeError(f"{field_name} must be numeric")
+    if not low <= float(value) <= high:
+        raise ValueError(f"{field_name} must be in [{low}, {high}], got {value!r}")
+
+
+def _weighted_choice(rng: Random, weights: dict[T, float]) -> T:
     if not weights:
         raise ValueError("weights must not be empty")
 
@@ -149,7 +158,12 @@ class DifficultyProfile:
 
         _require_non_negative(self.candidate_score_jitter, "candidate_score_jitter")
         _require_non_negative(self.expert_misdirection_bonus, "expert_misdirection_bonus")
-        _require_non_negative(self.expert_truth_visibility_bonus, "expert_truth_visibility_bonus")
+        _require_signed_range(
+            self.expert_truth_visibility_bonus,
+            "expert_truth_visibility_bonus",
+            low=-1.0,
+            high=1.0,
+        )
 
 
 @dataclass(frozen=True)

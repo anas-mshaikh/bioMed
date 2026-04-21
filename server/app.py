@@ -3,7 +3,7 @@ from __future__ import annotations
 from openenv.core.env_server import create_fastapi_app
 
 from models import BioMedAction, BioMedObservation
-from server.environment import BioMedEnvironment
+from server.bioMed_environment import BioMedEnvironment
 
 
 def build_environment() -> BioMedEnvironment:

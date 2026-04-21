@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from bioMed.models import BioMedAction
-from bioMed.server.rules import RuleCheckResult
-from bioMed.server.simulator.transition import ACTION_COSTS, TransitionResult
+from models import BioMedAction
+from server.rules import RuleCheckResult
+from server.simulator.transition import ACTION_COSTS, TransitionResult
 
 from .reward_config import RewardConfig
 from .reward_types import RewardBreakdown
@@ -42,6 +42,8 @@ def _history(state: object) -> list[dict[str, Any]]:
         for item in raw:
             if isinstance(item, Mapping):
                 out.append(dict(item))
+            elif hasattr(item, "__dict__"):
+                out.append({str(k): v for k, v in vars(item).items()})
         return out
     return []
 

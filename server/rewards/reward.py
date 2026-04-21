@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from bioMed.models import BioMedAction
-from bioMed.server.rules import RuleCheckResult
-from bioMed.server.simulator.transition import TransitionResult
+from models import BioMedAction
+from server.rules import RuleCheckResult
+from server.simulator.transition import TransitionResult
 
 from .reward_config import RewardConfig
 from .reward_types import RewardBreakdown

@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bioremed-foundry"
+name = "bioMed"
 version = "0.1.0"
 description = "OpenEnv environment for PET bioremediation planning"
 readme = "README.md"
@@ -21,7 +21,8 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["bioMed", "bioMed.server"]
+py-modules = ["client", "models"]
+packages = ["server", "server.rules", "server.rewards", "server.simulator", "server.tasks", "training"]
 
 [tool.ruff]
 line-length = 100

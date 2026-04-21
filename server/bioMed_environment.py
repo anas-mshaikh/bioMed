@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from models import BioMedAction, BioMedObservation, BioMedVisibleState, StepResult
-from server.observation_builder import ObservationBuilder
+from models import BioMedAction, BioMedObservation, BioMedVisibleState
+from server.simulator.observation_builder import BioMedObservationBuilder
 from server.rewards import RewardComputer
 from server.rules import RuleEngine
-from server.scenarios import sample_episode_latent_state
-from server.transition_engine import TransitionEngine
-from bioMed.server.rewards import RewardComputer
+from server.tasks.scenarios import sample_episode_latent_state
+from server.simulator.transition import BioMedTransitionEngine
+from openenv.core.client_types import StepResult
 
 
 class BioMedEnvironment:
@@ -16,10 +16,9 @@ class BioMedEnvironment:
 
     def __init__(self) -> None:
         self.rule_engine = RuleEngine()
-        self.transition_engine = TransitionEngine()
+        self.transition_engine = BioMedTransitionEngine()
         self.reward_computer = RewardComputer()
-        self.observation_builder = ObservationBuilder()
-        self.reward_computer = RewardComputer()
+        self.observation_builder = BioMedObservationBuilder()
 
         self._episode_id: str | None = None
         self._step_count: int = 0
@@ -41,11 +40,11 @@ class BioMedEnvironment:
         )
         self._latent.episode_id = self._episode_id
 
-        initial_observation = self.observation_builder.build_initial_observation(
-            latent=self._latent,
+        bundle = self.observation_builder.build_reset_bundle(
+            self._latent,
             legal_next_actions=self.rule_engine.get_legal_next_actions(self._latent),
         )
-        return initial_observation
+        return bundle.observation
 
     def step(self, action: BioMedAction) -> StepResult:
         if self._latent is None:
@@ -53,7 +52,6 @@ class BioMedEnvironment:
 
         self._step_count += 1
 
-        # in step()
         rule_result = self.rule_engine.validate_action(self._latent, action)
 
         if rule_result.hard_violations:
@@ -78,9 +76,9 @@ class BioMedEnvironment:
         prev_latent = self._latent.model_copy(deep=True)
 
         transition_result = self.transition_engine.step(
-            latent=self._latent,
+            state=self._latent,
             action=action,
-            soft_violation_messages=rule_result.soft_messages,
+            soft_violations=rule_result.soft_messages,
         )
         self._latent = transition_result.next_state
 
@@ -100,15 +98,15 @@ class BioMedEnvironment:
             )
             reward_breakdown.merge(terminal_breakdown)
 
-        observation = self.observation_builder.build_post_action_observation(
-            latent=self._latent,
-            transition_result=transition_result,
+        observation = self.observation_builder.build_step_bundle(
+            self._latent,
+            transition_result.effect,
             legal_next_actions=self.rule_engine.get_legal_next_actions(self._latent),
-            warnings=rule_result.decision.as_observation_messages(),
+            extra_warnings=rule_result.decision.as_observation_messages(),
         )
 
         return StepResult(
-            observation=observation,
+            observation=observation.observation,
             reward=reward_breakdown.total,
             done=self._latent.done,
             info={
