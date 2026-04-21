@@ -8,6 +8,7 @@ from server.rewards import RewardComputer
 from server.rules import RuleEngine
 from server.scenarios import sample_episode_latent_state
 from server.transition_engine import TransitionEngine
+from bioMed.server.rewards import RewardComputer
 
 
 class BioMedEnvironment:
@@ -18,6 +19,7 @@ class BioMedEnvironment:
         self.transition_engine = TransitionEngine()
         self.reward_computer = RewardComputer()
         self.observation_builder = ObservationBuilder()
+        self.reward_computer = RewardComputer()
 
         self._episode_id: str | None = None
         self._step_count: int = 0
@@ -51,13 +53,11 @@ class BioMedEnvironment:
 
         self._step_count += 1
 
+        # in step()
         rule_result = self.rule_engine.validate_action(self._latent, action)
 
         if rule_result.hard_violations:
-            reward = self.reward_computer.invalid_action_penalty(
-                hard_messages=rule_result.hard_messages,
-                soft_messages=rule_result.soft_messages,
-            )
+            reward_breakdown = self.reward_computer.invalid_action_penalty(rule_result)
             observation = self.observation_builder.build_invalid_action_observation(
                 latent=self._latent,
                 decision=rule_result.decision,
@@ -65,13 +65,13 @@ class BioMedEnvironment:
             )
             return StepResult(
                 observation=observation,
-                reward=reward.total,
+                reward=reward_breakdown.total,
                 done=False,
                 info={
+                    "reward_breakdown": reward_breakdown.to_dict(),
                     "rule_code": rule_result.decision.rule_code,
                     "hard_violations": rule_result.hard_messages,
                     "soft_violations": rule_result.soft_messages,
-                    "reward_breakdown": reward.to_dict(),
                 },
             )
 
@@ -82,33 +82,40 @@ class BioMedEnvironment:
             action=action,
             soft_violation_messages=rule_result.soft_messages,
         )
-        self._latent = transition_result.next_latent
+        self._latent = transition_result.next_state
 
-        reward = self.reward_computer.step_reward(
+        reward_breakdown = self.reward_computer.step_reward(
             action=action,
-            prev_latent=prev_latent,
-            next_latent=self._latent,
+            prev_state=prev_latent,
+            next_state=self._latent,
             transition_result=transition_result,
-            soft_messages=rule_result.soft_messages,
+            rule_result=rule_result,
         )
 
-        legal_next_actions = self.rule_engine.get_legal_next_actions(self._latent)
+        if self._latent.done:
+            recommendation = (action.parameters or {}).get("recommendation", {})
+            terminal_breakdown = self.reward_computer.terminal_reward(
+                state=self._latent,
+                recommendation=recommendation,
+            )
+            reward_breakdown.merge(terminal_breakdown)
+
         observation = self.observation_builder.build_post_action_observation(
             latent=self._latent,
             transition_result=transition_result,
-            legal_next_actions=legal_next_actions,
+            legal_next_actions=self.rule_engine.get_legal_next_actions(self._latent),
             warnings=rule_result.decision.as_observation_messages(),
         )
 
         return StepResult(
             observation=observation,
-            reward=reward.total,
+            reward=reward_breakdown.total,
             done=self._latent.done,
             info={
+                "reward_breakdown": reward_breakdown.to_dict(),
                 "rule_code": rule_result.decision.rule_code,
                 "hard_violations": rule_result.hard_messages,
                 "soft_violations": rule_result.soft_messages,
-                "reward_breakdown": reward.to_dict(),
             },
         )
 
