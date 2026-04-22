@@ -710,9 +710,7 @@ class BioMedTransitionEngine:
         )
         return TransitionEffect(
             effect_type="candidate_registry",
-            summary=(
-                "Estimated a coarse thermostability signal from candidate evidence."
-            ),
+            summary=("Estimated a coarse thermostability signal from candidate evidence."),
             success=True,
             quality_score=0.77,
             artifacts=[
@@ -1188,9 +1186,7 @@ class BioMedTransitionEngine:
         recommendation = action.parameters.get("recommendation", {})
         if not isinstance(recommendation, dict):
             recommendation = {}
-        proposed_intervention_family = str(
-            recommendation.get("recommended_family", "unspecified")
-        )
+        proposed_intervention_family = str(recommendation.get("recommended_family", "unspecified"))
         claimed_bottleneck = str(recommendation.get("primary_bottleneck", "unspecified"))
         decision = str(recommendation.get("decision", "proceed"))
         decision_summary = str(

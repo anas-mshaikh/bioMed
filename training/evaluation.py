@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import math
 import statistics
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any
+
 
 from .trajectory import Trajectory, TrajectoryDataset
+from common.terminal_labels import BOTTLENECK_ALIASES, FAMILY_ALIASES
 
 
 def _mean(values: list[float]) -> float:
@@ -45,6 +46,10 @@ def _last_recommendation(traj: Trajectory) -> dict[str, Any]:
                 if isinstance(recommendation, dict):
                     return recommendation
     return {}
+
+
+def _has_final_recommendation(traj: Trajectory) -> bool:
+    return bool(_last_recommendation(traj))
 
 
 def _last_confidence(traj: Trajectory) -> float:
@@ -108,7 +113,9 @@ def _extract_predicted_stop(traj: Trajectory) -> bool:
     decision = str(rec.get("decision", "")).lower()
     if decision in {"stop", "no_go", "halt"}:
         return True
-    if isinstance(rec.get("continue_exploration"), bool):
+    if decision in {"proceed", "continue", "go"}:
+        return False
+    if not decision and isinstance(rec.get("continue_exploration"), bool):
         return not bool(rec["continue_exploration"])
     return False
 
@@ -123,28 +130,6 @@ def _extract_truth_family(traj: Trajectory) -> str | None:
     truth = _truth_summary(traj)
     value = truth.get("best_intervention_family")
     return str(value).lower() if value else None
-
-
-BOTTLENECK_ALIASES: dict[str, set[str]] = {
-    "substrate_accessibility": {
-        "substrate_accessibility",
-        "high_crystallinity",
-        "crystallinity",
-        "pretreatment_needed",
-    },
-    "thermostability": {"thermostability", "stability", "thermal_instability"},
-    "contamination_artifact": {"contamination_artifact", "contamination", "artifact"},
-    "cocktail_synergy": {"cocktail_synergy", "synergy", "cocktail"},
-    "candidate_mismatch": {"candidate_mismatch", "enzyme_mismatch", "fit_problem"},
-    "no_go": {"no_go", "economics", "poor_viability", "stop"},
-}
-
-FAMILY_ALIASES: dict[str, set[str]] = {
-    "pretreat_then_single": {"pretreat_then_single", "pretreat", "pretreatment_first"},
-    "thermostable_single": {"thermostable_single", "thermostable", "single"},
-    "cocktail": {"cocktail", "cocktail_route", "mixture"},
-    "no_go": {"no_go", "stop", "halt"},
-}
 
 
 def _alias_match(predicted: str | None, truth: str | None, alias_map: dict[str, set[str]]) -> float:
@@ -276,6 +261,11 @@ class BioMedEvaluationSuite:
                 "soft_violation_rate": 0.0,
             }
 
+        if all(not step.reward_breakdown for traj in trajectories for step in traj.steps):
+            raise ValueError(
+                "All trajectory reward_breakdown values are empty; benchmark metrics are not trustworthy."
+            )
+
         no_hard_violation_episodes = []
         ordering_scores = []
         unique_actions: set[str] = set()
@@ -336,11 +326,13 @@ class BioMedEvaluationSuite:
             )
 
             truth_family = _extract_truth_family(traj)
-            if truth_family:
+            if truth_family and _has_final_recommendation(traj):
                 if truth_family == "no_go":
                     stop_scores.append(1.0 if _extract_predicted_stop(traj) else 0.0)
                 else:
                     stop_scores.append(0.0 if _extract_predicted_stop(traj) else 1.0)
+            elif truth_family:
+                stop_scores.append(0.0)
 
             visible_state = _last_visible_state(traj)
             spent_budget = float(visible_state.get("spent_budget", 0.0) or 0.0)

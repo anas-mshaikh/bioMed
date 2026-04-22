@@ -85,8 +85,12 @@ def run_single_episode(
         action = policy.select_action(observation=observation, trajectory=trajectory, rng=rng)
         result = env.step(action)
         observation = result.observation
-        info = dict(getattr(result, "info", {}) or {})
-        reward_breakdown = dict(info.get("reward_breakdown", {}) or {})
+        reward_breakdown = dict(getattr(result, "reward_breakdown", {}) or {})
+        info = {
+            "rule_code": getattr(result, "rule_code", None),
+            "hard_violations": list(getattr(result, "hard_violations", []) or []),
+            "soft_violations": list(getattr(result, "soft_violations", []) or []),
+        }
         visible_state = _state_dict(env)
 
         trajectory.add_step(
@@ -112,6 +116,17 @@ def run_single_episode(
     trajectory.metadata["terminated"] = done
     trajectory.metadata["max_steps_reached"] = not done and step_idx >= max_steps
     trajectory.success = classify_success(trajectory)
+
+    last = trajectory.final_step.action if trajectory.final_step else None
+    print(
+        {
+            "episode_id": trajectory.episode_id,
+            "num_steps": trajectory.num_steps,
+            "last_action": last,
+            "terminated": trajectory.metadata.get("terminated"),
+            "max_steps_reached": trajectory.metadata.get("max_steps_reached"),
+        }
+    )
     return trajectory
 
 

@@ -6,6 +6,7 @@ from typing import Any
 from .reward_config import RewardConfig
 from .reward_types import RewardBreakdown
 from .shaping import ProgressPotential
+from common.terminal_labels import BOTTLENECK_ALIASES, FAMILY_ALIASES
 
 
 def _clip(value: float, lower: float, upper: float) -> float:
@@ -32,51 +33,11 @@ def _as_dict(value: Any) -> dict[str, Any]:
 
 
 class TerminalRewardEngine:
-    BOTTLENECK_ALIASES: dict[str, set[str]] = {
-        "substrate_accessibility": {
-            "substrate_accessibility",
-            "high_crystallinity",
-            "crystallinity",
-            "pretreatment_needed",
-        },
-        "thermostability": {
-            "thermostability",
-            "stability",
-            "thermal_instability",
-        },
-        "contamination_artifact": {
-            "contamination",
-            "contamination_artifact",
-            "artifact",
-        },
-        "cocktail_synergy": {
-            "cocktail_synergy",
-            "synergy",
-            "single_candidate_limit",
-        },
-        "candidate_mismatch": {
-            "candidate_mismatch",
-            "enzyme_mismatch",
-            "fit_problem",
-        },
-        "no_go": {
-            "no_go",
-            "stop",
-            "economics",
-            "poor_viability",
-        },
-    }
-
-    FAMILY_ALIASES: dict[str, set[str]] = {
-        "pretreat_then_single": {"pretreat_then_single", "pretreat", "pretreatment_first"},
-        "thermostable_single": {"thermostable_single", "thermostable", "single"},
-        "cocktail": {"cocktail", "cocktail_route", "mixture"},
-        "no_go": {"no_go", "stop", "halt"},
-    }
-
     def __init__(self, config: RewardConfig, potential: ProgressPotential) -> None:
         self.config = config
         self.potential = potential
+        self.BOTTLENECK_ALIASES = BOTTLENECK_ALIASES
+        self.FAMILY_ALIASES = FAMILY_ALIASES
 
     def compute(
         self,
@@ -113,8 +74,10 @@ class TerminalRewardEngine:
         cost_realism = self._cost_realism_score(state, predicted_family, predicted_stop)
 
         overconfidence_penalty = 0.0
-        if correctness < 0.50 and confidence > 0.80:
-            overconfidence_penalty = self.config.overconfidence_base_penalty * confidence
+        if correctness < 0.75 and confidence > 0.65:
+            overconfidence_penalty = (
+                self.config.overconfidence_base_penalty * confidence * (1.0 - correctness)
+            )
 
         rb.components["completeness"] = completeness
         rb.components["true_bottleneck"] = 0.0
@@ -194,7 +157,9 @@ class TerminalRewardEngine:
         continue_exploration = recommendation.get("continue_exploration")
         if decision in {"stop", "no_go", "halt"}:
             return True
-        if isinstance(continue_exploration, bool):
+        if decision in {"proceed", "continue", "go"}:
+            return False
+        if not decision and isinstance(continue_exploration, bool):
             return not continue_exploration
         return False
 

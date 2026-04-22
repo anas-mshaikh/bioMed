@@ -34,14 +34,14 @@ class RewardConfig:
     time_sensitivity: float = 4.0
 
     # terminal weights
-    terminal_completeness_weight: float = 2.0
-    terminal_bottleneck_weight: float = 3.0
-    terminal_family_weight: float = 2.5
-    terminal_stop_go_weight: float = 2.0
-    terminal_calibration_weight: float = 1.5
-    terminal_cost_realism_weight: float = 1.0
+    terminal_completeness_weight: float = 1.0
+    terminal_bottleneck_weight: float = 4.0
+    terminal_family_weight: float = 1.25
+    terminal_stop_go_weight: float = 0.75
+    terminal_calibration_weight: float = 0.25
+    terminal_cost_realism_weight: float = 0.25
 
-    overconfidence_base_penalty: float = -1.5
+    overconfidence_base_penalty: float = -3.0
 
     milestone_weights: dict[str, float] = field(
         default_factory=lambda: {

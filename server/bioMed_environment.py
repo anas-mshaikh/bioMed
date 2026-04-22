@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass
+from typing import Any
 from uuid import uuid4
 
 from models import BioMedAction, BioMedObservation, BioMedVisibleState
@@ -9,7 +11,27 @@ from server.rewards import RewardComputer
 from server.rules import RuleEngine
 from server.tasks.scenarios import sample_episode_latent_state
 from server.simulator.transition import BioMedTransitionEngine
-from openenv.core.client_types import StepResult
+# from openenv.core.client_types import StepResult
+
+
+@dataclass
+class LocalStepResult:
+    observation: BioMedObservation
+    reward: float | None = None
+    done: bool = False
+    reward_breakdown: dict[str, Any] | None = None
+    rule_code: str | None = None
+    hard_violations: list[str] | None = None
+    soft_violations: list[str] | None = None
+
+    @property
+    def info(self) -> dict[str, Any]:
+        return {
+            "reward_breakdown": dict(self.reward_breakdown or {}),
+            "rule_code": self.rule_code,
+            "hard_violations": list(self.hard_violations or []),
+            "soft_violations": list(self.soft_violations or []),
+        }
 
 
 class BioMedEnvironment:
@@ -47,7 +69,7 @@ class BioMedEnvironment:
         )
         return bundle.observation
 
-    def step(self, action: BioMedAction) -> StepResult:
+    def step(self, action: BioMedAction) -> LocalStepResult:
         if self._latent is None:
             raise RuntimeError("Call reset() before step().")
 
@@ -62,10 +84,14 @@ class BioMedEnvironment:
                 decision=rule_result.decision,
                 legal_next_actions=self.rule_engine.get_legal_next_actions(self._latent),
             )
-            return StepResult(
+            return LocalStepResult(
                 observation=observation,
                 reward=reward_breakdown.total,
                 done=False,
+                reward_breakdown=reward_breakdown.to_dict(),
+                rule_code=rule_result.decision.rule_code,
+                hard_violations=list(rule_result.hard_messages),
+                soft_violations=list(rule_result.soft_messages),
             )
 
         prev_latent = deepcopy(self._latent)
@@ -100,10 +126,14 @@ class BioMedEnvironment:
             extra_warnings=rule_result.decision.as_observation_messages(),
         )
 
-        return StepResult(
+        return LocalStepResult(
             observation=observation.observation,
             reward=reward_breakdown.total,
             done=self._latent.done,
+            reward_breakdown=reward_breakdown.to_dict(),
+            rule_code=rule_result.decision.rule_code,
+            hard_violations=list(rule_result.hard_messages),
+            soft_violations=list(rule_result.soft_messages),
         )
 
     @property
@@ -134,8 +164,12 @@ class BioMedEnvironment:
     ) -> BioMedObservation:
         return self.reset(
             seed=seed,
-            scenario_family=kwargs.get("scenario_family") if isinstance(kwargs.get("scenario_family"), str) else None,
-            difficulty=kwargs.get("difficulty") if isinstance(kwargs.get("difficulty"), str) else None,
+            scenario_family=kwargs.get("scenario_family")
+            if isinstance(kwargs.get("scenario_family"), str)
+            else None,
+            difficulty=kwargs.get("difficulty")
+            if isinstance(kwargs.get("difficulty"), str)
+            else None,
         )
 
     async def step_async(
