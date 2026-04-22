@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
+from common.terminal_labels import ASSAY_ROUTE_FAMILIES, milestone_count
 from models import BioMedAction
-from common.terminal_labels import milestone_count
 from server.simulator.latent_state import LatentEpisodeState
 from server.simulator.transition import ACTION_COSTS
 from .types import RuleCheckResult, RuleDecision, RuleSeverity, RuleViolation
@@ -230,6 +230,18 @@ class RuleEngine:
                     message="finalize_recommendation requires a structured 'recommendation' object.",
                 )
 
+        if action.action_kind == "run_hydrolysis_assay":
+            candidate_family = (action.parameters or {}).get("candidate_family")
+            if not isinstance(candidate_family, str) or candidate_family not in ASSAY_ROUTE_FAMILIES:
+                return RuleViolation(
+                    rule_code="MISSING_REQUIRED_FIELD",
+                    severity="hard",
+                    message=(
+                        "run_hydrolysis_assay requires a valid 'candidate_family' parameter "
+                        f"from {ASSAY_ROUTE_FAMILIES}."
+                    ),
+                )
+
         return None
 
     def _check_terminal_state(self, latent: LatentEpisodeState) -> RuleViolation | None:
@@ -384,19 +396,24 @@ class RuleEngine:
         if not history:
             return None
 
-        last = history[-1]
         a = action.action_kind
-        last_action_kind = getattr(last, "action_kind", None)
-        if last_action_kind is None and isinstance(last, dict):
-            last_action_kind = last.get("action_kind")
+        recent = history[-4:]
+        recent_action_kinds: list[str] = []
+        for item in recent:
+            action_kind = getattr(item, "action_kind", None)
+            if action_kind is None and isinstance(item, dict):
+                action_kind = item.get("action_kind")
+            if isinstance(action_kind, str):
+                recent_action_kinds.append(action_kind)
 
-        if last_action_kind == a:
+        if recent_action_kinds and recent_action_kinds[-1] == a:
             if a in {"query_literature", "query_candidate_registry"}:
                 return RuleViolation(
                     rule_code="REDUNDANT_QUERY",
                     severity="soft",
                     message=f"Repeated '{a}' with no intervening evidence may be low value.",
                 )
+            last = recent[-1]
             last_expert_id = getattr(last, "expert_id", None)
             if last_expert_id is None and isinstance(last, dict):
                 last_expert_id = last.get("expert_id")
@@ -418,6 +435,13 @@ class RuleEngine:
                     severity="soft",
                     message=f"Repeated '{a}' may waste budget unless justified by new conditions.",
                 )
+
+        if a in {"inspect_feedstock", "query_literature", "query_candidate_registry"} and a in recent_action_kinds:
+            return RuleViolation(
+                rule_code="LOW_VALUE_REVISIT",
+                severity="soft",
+                message=f"Recent reuse of '{a}' without new context is likely low value.",
+            )
 
         return None
 

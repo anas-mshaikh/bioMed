@@ -45,6 +45,27 @@ def test_benchmark_metrics_require_persisted_reward_breakdowns() -> None:
         BioMedEvaluationSuite.benchmark_metrics(TrajectoryDataset([trajectory]))
 
 
+def test_benchmark_metrics_require_truth_summaries() -> None:
+    trajectory = Trajectory(
+        episode_id="empty-truth",
+        seed=1,
+        scenario_family="high_crystallinity",
+        difficulty="easy",
+        policy_name="fixture",
+    )
+    trajectory.add_step(
+        action=BioMedAction(action_kind="inspect_feedstock", parameters={}),
+        observation={"stage": "triage"},
+        reward=0.1,
+        done=False,
+        reward_breakdown={"validity": 0.1},
+        visible_state={"spent_budget": 1.0},
+    )
+
+    with pytest.raises(ValueError, match="truth summaries"):
+        BioMedEvaluationSuite.benchmark_metrics(TrajectoryDataset([trajectory]))
+
+
 def test_stop_go_accuracy_requires_a_real_final_recommendation() -> None:
     trajectory = Trajectory(
         episode_id="no-final-recommendation",
@@ -96,6 +117,43 @@ def test_classify_success_requires_a_final_recommendation() -> None:
     )
 
     assert classify_success(trajectory) is False
+
+
+def test_missing_decision_field_gets_no_stop_go_credit() -> None:
+    trajectory = Trajectory(
+        episode_id="missing-decision",
+        seed=8,
+        scenario_family="high_crystallinity",
+        difficulty="easy",
+        policy_name="fixture",
+        metadata={
+            "terminal_truth": {
+                "true_bottleneck": "thermostability",
+                "best_intervention_family": "thermostable_single",
+            }
+        },
+    )
+    trajectory.add_step(
+        action=BioMedAction(
+            action_kind="finalize_recommendation",
+            parameters={
+                "recommendation": {
+                    "primary_bottleneck": "thermostability",
+                    "recommended_family": "thermostable_single",
+                    "confidence": 0.6,
+                }
+            },
+        ),
+        observation={"stage": "done", "done_reason": "final_decision_submitted"},
+        reward=1.0,
+        done=True,
+        reward_breakdown={"terminal": 1.0},
+        info={"rule_code": None, "hard_violations": [], "soft_violations": []},
+        visible_state={"spent_budget": 4.0, "spent_time_days": 1},
+    )
+
+    metrics = BioMedEvaluationSuite.benchmark_metrics(TrajectoryDataset([trajectory]))
+    assert metrics["stop_go_accuracy"] == 0.0
 
 
 def test_info_per_cost_uses_budget_and_time() -> None:

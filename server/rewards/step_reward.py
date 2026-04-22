@@ -57,6 +57,38 @@ def _milestone_delta(prev_state: object, next_state: object) -> int:
     return len(next_done - prev_done)
 
 
+def _action_kind_and_params(action_or_kind: BioMedAction | str) -> tuple[str, Mapping[str, Any]]:
+    if isinstance(action_or_kind, BioMedAction):
+        params = action_or_kind.parameters if isinstance(action_or_kind.parameters, Mapping) else {}
+        return action_or_kind.action_kind, params
+    return str(action_or_kind), {}
+
+
+def _has_sample_context(discoveries: Mapping[str, bool]) -> bool:
+    return bool(
+        discoveries.get("feedstock_inspected", False)
+        or discoveries.get("crystallinity_measured", False)
+        or discoveries.get("contamination_measured", False)
+        or discoveries.get("particle_size_estimated", False)
+    )
+
+
+def _has_candidate_context(discoveries: Mapping[str, bool]) -> bool:
+    return bool(
+        discoveries.get("candidate_registry_queried", False)
+        or discoveries.get("stability_signal_estimated", False)
+    )
+
+
+def _has_decision_quality_evidence(discoveries: Mapping[str, bool]) -> bool:
+    return bool(
+        discoveries.get("activity_assay_run", False)
+        or discoveries.get("thermostability_assay_run", False)
+        or discoveries.get("pretreatment_tested", False)
+        or discoveries.get("cocktail_tested", False)
+    )
+
+
 class StepRewardEngine:
     def __init__(self, config: RewardConfig, potential: ProgressPotential) -> None:
         self.config = config
@@ -72,6 +104,7 @@ class StepRewardEngine:
         rule_result: RuleCheckResult,
     ) -> RewardBreakdown:
         rb = RewardBreakdown()
+        milestone_delta = _milestone_delta(prev_state, next_state)
 
         if rule_result.hard_violations:
             return self.invalid_action_penalty(rule_result)
@@ -79,8 +112,8 @@ class StepRewardEngine:
         output = getattr(transition_result, "effect", None)
         action_kind = getattr(action, "action_kind", "")
 
-        rb.validity = self._validity_score(output)
-        rb.ordering = self._ordering_score(action_kind, prev_state)
+        rb.validity = self._validity_score(output, action_kind, milestone_delta)
+        rb.ordering = self._ordering_score(action, prev_state)
         rb.info_gain = self._information_gain_score(output, prev_state, next_state)
         rb.efficiency = self._efficiency_score(action_kind, prev_state, next_state, rb.info_gain)
         rb.novelty = self._novelty_score(action_kind, prev_state)
@@ -89,9 +122,9 @@ class StepRewardEngine:
         soft_penalty = self.config.soft_violation_penalty_per_item * len(
             rule_result.soft_violations
         )
-        redundancy_penalty = self._redundancy_penalty(action_kind, prev_state)
+        redundancy_penalty = self._redundancy_penalty(action, prev_state)
         rb.penalty = (
-            soft_penalty + redundancy_penalty + self._special_penalties(action_kind, prev_state)
+            soft_penalty + redundancy_penalty + self._special_penalties(action, prev_state)
         )
 
         phi_prev = self.potential.potential(prev_state)
@@ -100,7 +133,7 @@ class StepRewardEngine:
 
         rb.components["soft_violation_count"] = float(len(rule_result.soft_violations))
         rb.components["hard_violation_count"] = float(len(rule_result.hard_violations))
-        rb.components["milestone_delta"] = float(_milestone_delta(prev_state, next_state))
+        rb.components["milestone_delta"] = float(milestone_delta)
         rb.components["phi_prev"] = phi_prev
         rb.components["phi_next"] = phi_next
         rb.components["output_quality"] = float(getattr(output, "quality_score", 0.0) or 0.0)
@@ -118,15 +151,25 @@ class StepRewardEngine:
             rb.add_note(violation.message)
         return rb
 
-    def _validity_score(self, output: object | None) -> float:
+    def _validity_score(self, output: object | None, action_kind: str, milestone_delta: int) -> float:
         success = bool(getattr(output, "success", False))
-        return self.config.validity_success_reward if success else 0.0
+        if not success:
+            return 0.0
+        if milestone_delta > 0 or action_kind in {"state_hypothesis", "finalize_recommendation"}:
+            return self.config.validity_success_reward
+        return 0.0
 
-    def _ordering_score(self, action_kind: str, state: object) -> float:
+    def _ordering_score(self, action_or_kind: BioMedAction | str, state: object) -> float:
+        action_kind, action_params = _action_kind_and_params(action_or_kind)
         d = _discoveries(state)
         evidence_count = milestone_count(d)
+        sample_context = _has_sample_context(d)
+        candidate_context = _has_candidate_context(d)
+        decision_quality_evidence = _has_decision_quality_evidence(d)
 
         if action_kind == "inspect_feedstock":
+            if d.get("feedstock_inspected", False):
+                return self.config.redundancy_penalty
             return (
                 self.config.ordering_natural_reward
                 if evidence_count == 0
@@ -138,58 +181,96 @@ class StepRewardEngine:
             "measure_contamination",
             "estimate_particle_size",
         }:
+            if d.get(
+                {
+                    "measure_crystallinity": "crystallinity_measured",
+                    "measure_contamination": "contamination_measured",
+                    "estimate_particle_size": "particle_size_estimated",
+                }[action_kind],
+                False,
+            ):
+                return self.config.redundancy_penalty
             if d.get("feedstock_inspected", False):
                 return self.config.ordering_natural_reward
             return self.config.ordering_premature_penalty
 
         if action_kind == "query_literature":
+            if d.get("literature_reviewed", False):
+                return self.config.redundancy_penalty
             if evidence_count <= 1:
                 return self.config.ordering_natural_reward
             return self.config.ordering_acceptable_reward
 
         if action_kind == "query_candidate_registry":
+            if d.get("candidate_registry_queried", False):
+                return self.config.redundancy_penalty
             if d.get("feedstock_inspected", False) or d.get("literature_reviewed", False):
                 return self.config.ordering_natural_reward
             return self.config.ordering_acceptable_reward
 
         if action_kind == "run_hydrolysis_assay":
-            if d.get("feedstock_inspected", False) or d.get("candidate_registry_queried", False):
+            requested_family = str(action_params.get("candidate_family", "") or "")
+            last_assay = _safe_mapping(getattr(state, "discoveries", {}).get("last_hydrolysis_assay"))
+            if requested_family and last_assay.get("candidate_family") == requested_family:
+                return self.config.redundancy_penalty
+            if d.get("activity_assay_run", False):
+                return -0.04
+            if sample_context and candidate_context:
                 return self.config.ordering_natural_reward
             return self.config.ordering_premature_penalty
 
         if action_kind == "estimate_stability_signal":
+            if d.get("stability_signal_estimated", False):
+                return self.config.redundancy_penalty
             if d.get("candidate_registry_queried", False):
                 return self.config.ordering_natural_reward
             return self.config.ordering_premature_penalty
 
         if action_kind == "run_thermostability_assay":
+            if d.get("thermostability_assay_run", False):
+                return self.config.redundancy_penalty
             if d.get("candidate_registry_queried", False):
                 return self.config.ordering_natural_reward
             return self.config.ordering_premature_penalty
 
         if action_kind == "test_pretreatment":
+            if d.get("pretreatment_tested", False):
+                return self.config.redundancy_penalty
             if d.get("crystallinity_measured", False) or d.get("activity_assay_run", False):
                 return self.config.ordering_natural_reward
             return self.config.ordering_premature_penalty
 
         if action_kind == "test_cocktail":
+            if d.get("cocktail_tested", False):
+                return self.config.redundancy_penalty
             if d.get("candidate_registry_queried", False) and d.get("activity_assay_run", False):
                 return self.config.ordering_natural_reward
             return self.config.ordering_premature_penalty
 
         if action_kind == "ask_expert":
+            if d.get("expert_consulted", False):
+                return -0.04
             if evidence_count >= 1:
                 return self.config.ordering_acceptable_reward
             return -0.02
 
         if action_kind == "state_hypothesis":
-            if evidence_count >= 2:
+            if d.get("hypothesis_stated", False):
+                return self.config.redundancy_penalty
+            if decision_quality_evidence and (sample_context or candidate_context):
                 return self.config.ordering_natural_reward
             return self.config.ordering_premature_penalty
 
         if action_kind == "finalize_recommendation":
-            if evidence_count >= 3 or d.get("hypothesis_stated", False):
+            if (
+                d.get("hypothesis_stated", False)
+                and sample_context
+                and candidate_context
+                and decision_quality_evidence
+            ):
                 return self.config.ordering_natural_reward
+            if sample_context and candidate_context and decision_quality_evidence:
+                return self.config.ordering_acceptable_reward
             return self.config.ordering_finalize_too_early_penalty
 
         return 0.0
@@ -234,11 +315,11 @@ class StepRewardEngine:
         raw_eff = _clip(raw_eff, 0.0, 1.0)
 
         info_multiplier = _clip(
-            0.35 + (info_gain_score / max(self.config.info_gain_weight, 1e-6)), 0.35, 1.0
+            0.15 + (info_gain_score / max(self.config.info_gain_weight, 1e-6)), 0.15, 1.0
         )
 
         if action_kind in {"query_literature", "query_candidate_registry"} and raw_eff > 0:
-            raw_eff = min(1.0, raw_eff + 0.05)
+            raw_eff = min(1.0, raw_eff + 0.02)
 
         return self.config.efficiency_weight * raw_eff * info_multiplier
 
@@ -247,20 +328,31 @@ class StepRewardEngine:
         if not history:
             return self.config.novelty_reward
 
-        recent_actions = [str(item.get("action_kind", "")) for item in history[-3:]]
+        recent_actions = [str(item.get("action_kind", "")) for item in history[-5:]]
         if action_kind in recent_actions:
             return 0.0
 
         return self.config.novelty_reward
 
-    def _redundancy_penalty(self, action_kind: str, state: object) -> float:
+    def _redundancy_penalty(self, action_or_kind: BioMedAction | str, state: object) -> float:
+        action_kind, action_params = _action_kind_and_params(action_or_kind)
         history = _history(state)
         if not history:
             return 0.0
 
-        last = history[-1]
-        if str(last.get("action_kind", "")) == action_kind:
+        recent = [str(item.get("action_kind", "")) for item in history[-4:]]
+        if recent and recent[-1] == action_kind:
             return self.config.redundancy_penalty
+        if action_kind in {"inspect_feedstock", "query_literature", "query_candidate_registry"} and action_kind in recent:
+            return self.config.redundancy_penalty * 1.5
+        if action_kind == "run_hydrolysis_assay":
+            requested_family = str(action_params.get("candidate_family", "") or "")
+            for item in history[-4:]:
+                if str(item.get("action_kind", "")) != "run_hydrolysis_assay":
+                    continue
+                metadata = _safe_mapping(item.get("metadata"))
+                if requested_family and metadata.get("candidate_family") == requested_family:
+                    return self.config.redundancy_penalty * 1.25
 
         return 0.0
 
@@ -300,22 +392,32 @@ class StepRewardEngine:
 
         return 0.0
 
-    def _special_penalties(self, action_kind: str, state: object) -> float:
+    def _special_penalties(self, action_or_kind: BioMedAction | str, state: object) -> float:
+        action_kind, _ = _action_kind_and_params(action_or_kind)
         d = _discoveries(state)
         evidence_count = milestone_count(d)
+        sample_context = _has_sample_context(d)
+        candidate_context = _has_candidate_context(d)
+        decision_quality_evidence = _has_decision_quality_evidence(d)
         penalty = 0.0
 
         if action_kind == "finalize_recommendation" and not (
-            d.get("hypothesis_stated", False) or evidence_count >= 3
+            d.get("hypothesis_stated", False)
+            and sample_context
+            and candidate_context
+            and decision_quality_evidence
         ):
             penalty += self.config.ordering_finalize_too_early_penalty
 
-        if action_kind == "state_hypothesis" and evidence_count < 2:
+        if action_kind == "state_hypothesis" and not decision_quality_evidence:
             penalty += -0.10
 
         if action_kind == "ask_expert":
             history = _history(state)
-            if history and history[-1].get("action_kind") == "ask_expert":
+            if history and any(item.get("action_kind") == "ask_expert" for item in history[-3:]):
                 penalty += -0.05
+
+        if action_kind == "run_hydrolysis_assay" and d.get("activity_assay_run", False):
+            penalty += -0.05
 
         return penalty

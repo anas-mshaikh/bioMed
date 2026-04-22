@@ -38,7 +38,10 @@ def _last_visible_state(traj: Trajectory) -> dict[str, Any]:
 
 
 def _truth_summary(traj: Trajectory) -> dict[str, Any]:
-    truth = traj.metadata.get("terminal_truth", traj.metadata.get("_terminal_truth", {}))
+    truth = traj.metadata.get(
+        "terminal_truth",
+        traj.metadata.get("benchmark_truth", traj.metadata.get("_terminal_truth", {})),
+    )
     return truth if isinstance(truth, dict) else {}
 
 
@@ -114,7 +117,7 @@ def _extract_predicted_family(traj: Trajectory) -> str | None:
     return None
 
 
-def _extract_predicted_stop(traj: Trajectory) -> bool:
+def _extract_predicted_stop(traj: Trajectory) -> bool | None:
     rec = _last_recommendation(traj)
     decision = str(rec.get("decision", "")).lower()
     if decision in {"stop", "no_go", "halt"}:
@@ -123,7 +126,7 @@ def _extract_predicted_stop(traj: Trajectory) -> bool:
         return False
     if not decision and isinstance(rec.get("continue_exploration"), bool):
         return not bool(rec["continue_exploration"])
-    return False
+    return None
 
 
 def _extract_truth_bottleneck(traj: Trajectory) -> str | None:
@@ -209,7 +212,8 @@ def classify_success(traj: Trajectory) -> bool:
         if truth_family == "no_go":
             stop_match = 1.0 if _extract_predicted_stop(traj) else 0.0
         else:
-            stop_match = 0.0 if _extract_predicted_stop(traj) else 1.0
+            predicted_stop = _extract_predicted_stop(traj)
+            stop_match = 1.0 if predicted_stop is False else 0.0
 
     composite = 0.4 * bottleneck_match + 0.4 * family_match + 0.2 * stop_match
     return composite >= 0.75
@@ -268,6 +272,10 @@ class BioMedEvaluationSuite:
         if all(not step.reward_breakdown for traj in trajectories for step in traj.steps):
             raise ValueError(
                 "All trajectory reward_breakdown values are empty; benchmark metrics are not trustworthy."
+            )
+        if all(not _truth_summary(traj) for traj in trajectories):
+            raise ValueError(
+                "All trajectory truth summaries are missing; benchmark metrics are not trustworthy."
             )
 
         no_hard_violation_episodes = []
@@ -334,7 +342,8 @@ class BioMedEvaluationSuite:
                 if truth_family == "no_go":
                     stop_scores.append(1.0 if _extract_predicted_stop(traj) else 0.0)
                 else:
-                    stop_scores.append(0.0 if _extract_predicted_stop(traj) else 1.0)
+                    predicted_stop = _extract_predicted_stop(traj)
+                    stop_scores.append(1.0 if predicted_stop is False else 0.0)
             elif truth_family:
                 stop_scores.append(0.0)
 

@@ -6,6 +6,7 @@ from copy import deepcopy
 import pytest
 
 from models import BioMedAction
+from server.simulator.transition import TransitionEffect
 
 
 pytestmark = pytest.mark.unit
@@ -65,3 +66,86 @@ def test_ordering_does_not_count_payload_blobs_as_extra_evidence(reward_computer
     score = step_engine._ordering_score("query_literature", state)
 
     assert score == reward_computer.config.ordering_natural_reward
+
+
+def test_repeated_low_value_actions_do_not_get_positive_ordering(reward_computer, high_crystallinity_latent) -> None:
+    state = deepcopy(high_crystallinity_latent)
+    state.discoveries["query_candidate_registry"] = {"top_candidate": "thermostable_single"}
+    state.discoveries["candidate_registry_queried"] = True
+
+    score = reward_computer.step_engine._ordering_score("query_candidate_registry", state)
+    assert score <= 0.0
+
+
+def test_finalize_requires_discriminative_evidence_for_positive_ordering(
+    reward_computer, high_crystallinity_latent
+) -> None:
+    state = deepcopy(high_crystallinity_latent)
+    state.discoveries["feedstock_inspected"] = True
+    state.discoveries["candidate_registry_queried"] = True
+    state.discoveries["hypothesis_stated"] = True
+    state.progress.completed_milestones.extend(
+        ["feedstock_inspected", "candidate_registry_queried", "hypothesis_stated"]
+    )
+
+    score = reward_computer.step_engine._ordering_score("finalize_recommendation", state)
+    assert score < 0.0
+
+
+def test_repeated_same_route_hydrolysis_is_not_positive(reward_computer, high_crystallinity_latent) -> None:
+    state = deepcopy(high_crystallinity_latent)
+    state.discoveries["feedstock_inspected"] = True
+    state.discoveries["candidate_registry_queried"] = True
+    state.discoveries["activity_assay_run"] = True
+    state.discoveries["last_hydrolysis_assay"] = {"candidate_family": "thermostable_single"}
+    state.append_history(
+        action_kind="run_hydrolysis_assay",
+        summary="prior assay",
+        metadata={"candidate_family": "thermostable_single"},
+    )
+
+    ordering = reward_computer.step_engine._ordering_score(
+        BioMedAction(
+            action_kind="run_hydrolysis_assay",
+            parameters={"candidate_family": "thermostable_single"},
+        ),
+        state,
+    )
+    penalty = reward_computer.step_engine._redundancy_penalty(
+        BioMedAction(
+            action_kind="run_hydrolysis_assay",
+            parameters={"candidate_family": "thermostable_single"},
+        ),
+        state,
+    )
+
+    assert ordering <= 0.0
+    assert penalty < 0.0
+
+
+def test_information_gain_uses_uncertainty(reward_computer, high_crystallinity_latent) -> None:
+    prev_state = deepcopy(high_crystallinity_latent)
+    next_state = deepcopy(high_crystallinity_latent)
+    next_state.discoveries["feedstock_inspected"] = True
+
+    high_quality = TransitionEffect(
+        effect_type="inspection",
+        summary="high quality",
+        success=True,
+        quality_score=0.9,
+    )
+    low_quality = TransitionEffect(
+        effect_type="inspection",
+        summary="low quality",
+        success=True,
+        quality_score=0.3,
+    )
+
+    high_score = reward_computer.step_engine._information_gain_score(
+        high_quality, prev_state, next_state
+    )
+    low_score = reward_computer.step_engine._information_gain_score(
+        low_quality, prev_state, next_state
+    )
+
+    assert high_score > low_score

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from common.terminal_labels import completed_canonical_milestones
 from models import (
     ACTION_KIND_VALUES,
     ArtifactCard,
@@ -49,6 +50,29 @@ def _quality_to_uncertainty(quality_score: float | None) -> float | None:
     if quality_score is None:
         return None
     return round(_clamp(1.0 - quality_score, 0.05, 0.95), 4)
+
+
+_FORBIDDEN_PUBLIC_DATA_KEYS = {
+    "thermostability_risk",
+    "thermostability_bottleneck_risk",
+    "synergy_required",
+    "temperature_context",
+    "candidate_family_scores",
+    "artifact_risk",
+    "false_negative_risk",
+}
+
+
+def _sanitize_public_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _sanitize_public_payload(item)
+            for key, item in value.items()
+            if str(key) not in _FORBIDDEN_PUBLIC_DATA_KEYS
+        }
+    if isinstance(value, list):
+        return [_sanitize_public_payload(item) for item in value]
+    return value
 
 
 def _validate_legal_actions(legal_next_actions: list[str] | None) -> list[str]:
@@ -124,7 +148,7 @@ def _build_visible_state(state: LatentEpisodeState) -> BioMedVisibleState:
         stage=state.progress.stage,
         spent_budget=round(state.resources.budget_spent, 2),
         spent_time_days=state.resources.time_spent_days,
-        completed_milestones=list(state.progress.completed_milestones),
+        completed_milestones=completed_canonical_milestones(state.progress.completed_milestones),
         history_length=len(state.history),
         **common_fields,
     )
@@ -142,8 +166,10 @@ def _build_latest_output(effect: TransitionEffect | None) -> LatestOutput | None
         summary=effect.summary,
         success=effect.success,
         quality_score=effect.quality_score,
-        uncertainty=_quality_to_uncertainty(effect.quality_score),
-        data=dict(effect.data),
+        uncertainty=effect.uncertainty
+        if effect.uncertainty is not None
+        else _quality_to_uncertainty(effect.quality_score),
+        data=_sanitize_public_payload(dict(effect.data)),
     )
 
 
@@ -153,7 +179,7 @@ def _artifact_from_transition_artifact(item: TransitionArtifact) -> ArtifactCard
         artifact_type=item.artifact_type,
         title=item.title,
         summary=item.summary,
-        data=dict(item.data),
+        data=_sanitize_public_payload(dict(item.data)),
     )
 
 
@@ -182,7 +208,7 @@ def _build_invalid_action_observation(
         time_remaining_days=state.resources.time_remaining_days,
         legal_next_actions=legal_next_actions,
         warnings=decision.as_observation_messages(),
-        done_reason=None,
+        done_reason=state.done_reason if state.done else None,
     )
 
 
@@ -195,7 +221,7 @@ def _build_inspection_artifact(state: LatentEpisodeState, value: dict[str, Any])
             "Initial feedstock inspection recorded coarse physical hints "
             "about accessibility, contamination, and crystallinity."
         ),
-        data=dict(value),
+        data=_sanitize_public_payload(dict(value)),
     )
 
 
@@ -254,21 +280,28 @@ def _build_candidate_artifacts(
                 artifact_type="candidate_card",
                 title=str(display_name),
                 summary=summary,
-                data=dict(card),
+                data=_sanitize_public_payload(dict(card)),
             )
         )
 
     return artifacts
 
 
-def _build_assay_artifact(state: LatentEpisodeState, value: dict[str, Any]) -> ArtifactCard:
-    family = value.get("candidate_family", "unknown_route")
+def _build_assay_artifact(
+    state: LatentEpisodeState,
+    value: dict[str, Any],
+    *,
+    artifact_key: str,
+    title: str,
+    summary: str,
+) -> ArtifactCard:
+    family = value.get("candidate_family", artifact_key)
     return ArtifactCard(
-        artifact_id=f"{state.episode_id}:artifact:assay:{family}",
+        artifact_id=f"{state.episode_id}:artifact:assay:{artifact_key}:{family}",
         artifact_type="assay_report",
-        title="Hydrolysis assay report",
-        summary="Latest structured assay result for the selected remediation route.",
-        data=dict(value),
+        title=title,
+        summary=summary,
+        data=_sanitize_public_payload(dict(value)),
     )
 
 
@@ -282,7 +315,7 @@ def _build_expert_artifact(
         artifact_type="expert_note",
         title=f"Expert note: {expert_id}",
         summary=f"Guidance captured from expert actor '{expert_id}'.",
-        data=dict(value),
+        data=_sanitize_public_payload(dict(value)),
     )
 
 
@@ -292,7 +325,17 @@ def _build_decision_artifact(state: LatentEpisodeState, value: dict[str, Any]) -
         artifact_type="decision_note",
         title="Program decision",
         summary=value.get("decision_summary", "Program decision submitted."),
-        data=dict(value),
+        data=_sanitize_public_payload(dict(value)),
+    )
+
+
+def _build_hypothesis_artifact(state: LatentEpisodeState, value: dict[str, Any]) -> ArtifactCard:
+    return ArtifactCard(
+        artifact_id=f"{state.episode_id}:artifact:hypothesis",
+        artifact_type="decision_note",
+        title="Working hypothesis",
+        summary=str(value.get("hypothesis", "Working hypothesis recorded.")),
+        data=_sanitize_public_payload(dict(value)),
     )
 
 
@@ -322,7 +365,51 @@ def _build_artifacts_from_discoveries(state: LatentEpisodeState) -> list[Artifac
     if "last_hydrolysis_assay" in discoveries and isinstance(
         discoveries["last_hydrolysis_assay"], dict
     ):
-        artifacts.append(_build_assay_artifact(state, discoveries["last_hydrolysis_assay"]))
+        artifacts.append(
+            _build_assay_artifact(
+                state,
+                discoveries["last_hydrolysis_assay"],
+                artifact_key="hydrolysis",
+                title="Hydrolysis assay report",
+                summary="Latest structured assay result for the selected remediation route.",
+            )
+        )
+
+    if "thermostability_assay" in discoveries and isinstance(discoveries["thermostability_assay"], dict):
+        artifacts.append(
+            _build_assay_artifact(
+                state,
+                discoveries["thermostability_assay"],
+                artifact_key="thermostability",
+                title="Thermostability assay report",
+                summary="Latest thermostability assay result for the active candidate context.",
+            )
+        )
+
+    if "pretreatment_result" in discoveries and isinstance(discoveries["pretreatment_result"], dict):
+        artifacts.append(
+            _build_assay_artifact(
+                state,
+                discoveries["pretreatment_result"],
+                artifact_key="pretreatment",
+                title="Pretreatment test report",
+                summary="Latest pretreatment leverage result for the current substrate.",
+            )
+        )
+
+    if "cocktail_result" in discoveries and isinstance(discoveries["cocktail_result"], dict):
+        artifacts.append(
+            _build_assay_artifact(
+                state,
+                discoveries["cocktail_result"],
+                artifact_key="cocktail",
+                title="Cocktail test report",
+                summary="Latest cocktail synergy result for the current route shortlist.",
+            )
+        )
+
+    if "latest_hypothesis" in discoveries and isinstance(discoveries["latest_hypothesis"], dict):
+        artifacts.append(_build_hypothesis_artifact(state, discoveries["latest_hypothesis"]))
 
     for key, value in discoveries.items():
         if key.startswith("expert_reply:") and isinstance(value, dict):

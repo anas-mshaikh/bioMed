@@ -154,9 +154,16 @@ class Trajectory:
             return None
         return str(self.steps[-1].action.get("action_kind")) if self.steps[-1].action else None
 
-    def to_dict(self) -> dict[str, Any]:
+    def benchmark_truth(self) -> dict[str, Any]:
+        truth = self.metadata.get("benchmark_truth", self.metadata.get("terminal_truth", {}))
+        return dict(truth) if isinstance(truth, Mapping) else {}
+
+    def to_dict(self, *, include_benchmark_truth: bool = False) -> dict[str, Any]:
         public_metadata = {
-            str(key): value for key, value in self.metadata.items() if not str(key).startswith("_")
+            str(key): value
+            for key, value in self.metadata.items()
+            if not str(key).startswith("_")
+            and (include_benchmark_truth or str(key) not in {"benchmark_truth", "terminal_truth"})
         }
         return {
             "episode_id": self.episode_id,
@@ -222,16 +229,54 @@ class TrajectoryDataset:
             grouped.setdefault(trajectory.scenario_family, []).append(trajectory)
         return {k: TrajectoryDataset(v) for k, v in grouped.items()}
 
-    def save_jsonl(self, path: str | Path) -> Path:
+    def benchmark_truth_sidecar(self) -> dict[str, dict[str, Any]]:
+        sidecar: dict[str, dict[str, Any]] = {}
+        for trajectory in self.trajectories:
+            truth = trajectory.benchmark_truth()
+            if truth:
+                sidecar[trajectory.episode_id] = to_serializable(truth)
+        return sidecar
+
+    def apply_truth_sidecar(self, payload: Mapping[str, Any]) -> None:
+        for trajectory in self.trajectories:
+            truth = payload.get(trajectory.episode_id)
+            if isinstance(truth, Mapping):
+                trajectory.metadata["benchmark_truth"] = dict(truth)
+
+    def save_jsonl(
+        self,
+        path: str | Path,
+        *,
+        include_benchmark_truth: bool = False,
+        truth_sidecar_path: str | Path | None = None,
+    ) -> Path:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as f:
             for trajectory in self.trajectories:
-                f.write(json.dumps(trajectory.to_dict(), ensure_ascii=False) + "\n")
+                f.write(
+                    json.dumps(
+                        trajectory.to_dict(include_benchmark_truth=include_benchmark_truth),
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+        if truth_sidecar_path is not None:
+            truth_sidecar = Path(truth_sidecar_path)
+            truth_sidecar.parent.mkdir(parents=True, exist_ok=True)
+            truth_sidecar.write_text(
+                json.dumps(self.benchmark_truth_sidecar(), indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
         return path
 
     @classmethod
-    def load_jsonl(cls, path: str | Path) -> "TrajectoryDataset":
+    def load_jsonl(
+        cls,
+        path: str | Path,
+        *,
+        truth_sidecar_path: str | Path | None = None,
+    ) -> "TrajectoryDataset":
         path = Path(path)
         items: list[Trajectory] = []
         if not path.exists():
@@ -242,7 +287,16 @@ class TrajectoryDataset:
                 if not line:
                     continue
                 items.append(Trajectory.from_dict(json.loads(line)))
-        return cls(items)
+        dataset = cls(items)
+        if truth_sidecar_path is not None:
+            truth_sidecar = Path(truth_sidecar_path)
+            if not truth_sidecar.exists():
+                raise FileNotFoundError(truth_sidecar)
+            payload = json.loads(truth_sidecar.read_text(encoding="utf-8"))
+            if not isinstance(payload, Mapping):
+                raise TypeError("truth sidecar must contain a mapping keyed by episode_id")
+            dataset.apply_truth_sidecar(payload)
+        return dataset
 
     def save_dir(self, directory: str | Path) -> Path:
         directory = Path(directory)

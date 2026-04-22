@@ -4,6 +4,7 @@ import pytest
 
 from models import BioMedAction
 from training.baselines import BasePolicy, build_policy
+from training.evaluation import BioMedEvaluationSuite
 from training.rollout_collection import collect_rollouts, run_single_episode
 from training.replay import render_trajectory_markdown
 
@@ -80,10 +81,33 @@ def test_rollout_collection_strips_hidden_truth_from_serialized_output_by_defaul
         seed_start=105,
         capture_latent_truth=False,
     )
-    assert "_terminal_truth" in dataset.trajectories[0].metadata
+    assert "benchmark_truth" in dataset.trajectories[0].metadata
     payload = dataset.trajectories[0].to_dict()
     assert "terminal_truth" not in payload["metadata"]
-    assert "_terminal_truth" not in payload["metadata"]
+    assert "benchmark_truth" not in payload["metadata"]
+
+
+def test_saved_dataset_requires_truth_sidecar_for_reloaded_evaluation(tmp_path) -> None:
+    dataset = collect_rollouts(
+        policy=build_policy("cost_aware_heuristic"),
+        episodes=2,
+        scenario_families=["high_crystallinity"],
+        difficulty="easy",
+        max_steps=5,
+        seed_start=111,
+        capture_latent_truth=False,
+    )
+    path = tmp_path / "dataset.jsonl"
+    truth_path = tmp_path / "dataset.truth.json"
+    dataset.save_jsonl(path, truth_sidecar_path=truth_path)
+    reloaded_public = type(dataset).load_jsonl(path)
+    reloaded_private = type(dataset).load_jsonl(path, truth_sidecar_path=truth_path)
+
+    assert "benchmark_truth" not in reloaded_public.trajectories[0].metadata
+    with pytest.raises(ValueError, match="truth summaries"):
+        BioMedEvaluationSuite.benchmark_metrics(reloaded_public)
+    assert reloaded_private.trajectories[0].metadata.get("benchmark_truth")
+    assert BioMedEvaluationSuite.benchmark_metrics(reloaded_private) == BioMedEvaluationSuite.benchmark_metrics(dataset)
 
 
 def test_expert_rollout_persists_reward_and_rule_metadata() -> None:
@@ -146,3 +170,23 @@ def test_cost_aware_rollout_rationale_matches_terminal_labels() -> None:
     elif recommendation["primary_bottleneck"] == "substrate_accessibility":
         assert "crystall" in rationale or "pretreat" in rationale
         assert "thermo" not in rationale
+
+
+def test_public_replay_remains_truth_clean_after_serialization(tmp_path) -> None:
+    dataset = collect_rollouts(
+        policy=build_policy("random_legal"),
+        episodes=1,
+        scenario_families=["high_crystallinity"],
+        difficulty="easy",
+        max_steps=3,
+        seed_start=211,
+        capture_latent_truth=False,
+    )
+    jsonl_path = tmp_path / "public.jsonl"
+    truth_path = tmp_path / "private.truth.json"
+    dataset.save_jsonl(jsonl_path, truth_sidecar_path=truth_path)
+    reloaded = type(dataset).load_jsonl(jsonl_path)
+
+    markdown = render_trajectory_markdown(reloaded.trajectories[0])
+    assert "Hidden truth summary" not in markdown
+    assert truth_path.exists()

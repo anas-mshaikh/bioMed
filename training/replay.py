@@ -25,7 +25,10 @@ def render_trajectory_markdown(
     lines.append(f"- **Steps:** `{trajectory.num_steps}`")
     lines.append("")
 
-    terminal_truth = trajectory.metadata.get("terminal_truth", trajectory.metadata.get("_terminal_truth", {}))
+    terminal_truth = trajectory.metadata.get(
+        "terminal_truth",
+        trajectory.metadata.get("benchmark_truth", trajectory.metadata.get("_terminal_truth", {})),
+    )
     if show_hidden_truth and terminal_truth:
         lines.append("## Hidden truth summary")
         lines.append("")

@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 CANONICAL_BOTTLENECKS: tuple[str, ...] = (
@@ -17,6 +17,12 @@ CANONICAL_FAMILIES: tuple[str, ...] = (
     "no_go",
 )
 
+ASSAY_ROUTE_FAMILIES: tuple[str, ...] = (
+    "pretreat_then_single",
+    "thermostable_single",
+    "cocktail",
+)
+
 BOTTLENECK_RATIONALE_PHRASES: dict[str, str] = {
     "substrate_accessibility": "substrate accessibility driven by crystallinity or pretreatment sensitivity",
     "thermostability": "thermostability under realistic operating conditions",
@@ -27,9 +33,9 @@ BOTTLENECK_RATIONALE_PHRASES: dict[str, str] = {
 }
 
 FAMILY_RATIONALE_PHRASES: dict[str, str] = {
-    "pretreat_then_single": "pretreat_then_single",
-    "thermostable_single": "thermostable_single",
-    "cocktail": "cocktail",
+    "pretreat_then_single": "pretreatment-first single-enzyme route",
+    "thermostable_single": "thermostable single-enzyme route",
+    "cocktail": "cocktail route",
     "no_go": "no-go",
 }
 
@@ -95,9 +101,21 @@ EVIDENCE_MILESTONE_KEYS: tuple[str, ...] = (
 
 
 def milestone_count(discoveries: Mapping[str, Any] | Any) -> int:
-    if not isinstance(discoveries, Mapping):
-        return 0
-    return sum(1 for key in EVIDENCE_MILESTONE_KEYS if bool(discoveries.get(key, False)))
+    if isinstance(discoveries, Mapping):
+        return sum(1 for key in EVIDENCE_MILESTONE_KEYS if bool(discoveries.get(key, False)))
+    if isinstance(discoveries, Sequence) and not isinstance(discoveries, (str, bytes, bytearray)):
+        done = {str(item) for item in discoveries}
+        return sum(1 for key in EVIDENCE_MILESTONE_KEYS if key in done)
+    return 0
+
+
+def completed_canonical_milestones(discoveries: Mapping[str, Any] | Any) -> list[str]:
+    if isinstance(discoveries, Mapping):
+        return [key for key in EVIDENCE_MILESTONE_KEYS if bool(discoveries.get(key, False))]
+    if isinstance(discoveries, Sequence) and not isinstance(discoveries, (str, bytes, bytearray)):
+        done = {str(item) for item in discoveries}
+        return [key for key in EVIDENCE_MILESTONE_KEYS if key in done]
+    return []
 
 
 def infer_true_bottleneck(
@@ -132,7 +150,7 @@ def infer_true_family(best_intervention_family: str) -> str:
     family = str(best_intervention_family or "").strip().lower()
     if family in CANONICAL_FAMILIES:
         return family
-    return "thermostable_single"
+    return "no_go" if family == "no_go" else "thermostable_single"
 
 
 def terminal_recommendation_rationale(

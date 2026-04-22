@@ -82,7 +82,16 @@ def test_characterize_first_moves_beyond_repeated_inspection(fresh_env) -> None:
 
 def test_default_recommendation_rationale_matches_structured_terminal_labels() -> None:
     thermo = _default_recommendation(
-        observation={"stage": "done"},
+        observation={
+            "stage": "done",
+            "artifacts": [
+                {
+                    "artifact_type": "assay_report",
+                    "title": "Thermostability assay report",
+                    "data": {"retention_fraction": 0.32},
+                }
+            ],
+        },
         trajectory=_trajectory_with_actions(
             [
                 "inspect_feedstock",
@@ -99,7 +108,21 @@ def test_default_recommendation_rationale_matches_structured_terminal_labels() -
     assert "substrate" not in thermo_rationale
 
     substrate = _default_recommendation(
-        observation={"stage": "done"},
+        observation={
+            "stage": "done",
+            "artifacts": [
+                {
+                    "artifact_type": "inspection_note",
+                    "title": "Feedstock inspection note",
+                    "data": {"crystallinity_band": "high"},
+                },
+                {
+                    "artifact_type": "assay_report",
+                    "title": "Pretreatment test report",
+                    "data": {"pretreatment_uplift": 0.4},
+                },
+            ],
+        },
         trajectory=_trajectory_with_actions(
             [
                 "inspect_feedstock",
@@ -114,3 +137,177 @@ def test_default_recommendation_rationale_matches_structured_terminal_labels() -
     assert substrate["recommended_family"] == "pretreat_then_single"
     assert "crystall" in substrate_rationale or "pretreat" in substrate_rationale
     assert "thermo" not in substrate_rationale
+
+
+def test_hydrolysis_actions_include_explicit_candidate_family() -> None:
+    action = build_policy("cost_aware_heuristic").select_action(
+        observation={
+            "legal_next_actions": ["run_hydrolysis_assay"],
+            "artifacts": [
+                {
+                    "artifact_type": "candidate_card",
+                    "data": {
+                        "candidate_family": "pretreat_then_single",
+                        "visible_score": 0.9,
+                    },
+                }
+            ],
+        },
+        trajectory=_trajectory_with_actions(["inspect_feedstock", "query_candidate_registry"]),
+        rng=random.Random(0),
+    )
+    assert action.action_kind == "run_hydrolysis_assay"
+    assert action.parameters["candidate_family"] == "pretreat_then_single"
+
+
+def test_default_recommendation_prefers_contamination_when_evidence_is_high() -> None:
+    recommendation = _default_recommendation(
+        observation={
+            "artifacts": [
+                {
+                    "artifact_type": "inspection_note",
+                    "title": "Contamination measurement",
+                    "data": {"contamination_band": "high"},
+                },
+                {
+                    "artifact_type": "candidate_card",
+                    "data": {"candidate_family": "thermostable_single", "visible_score": 0.95},
+                },
+            ]
+        },
+        trajectory=_trajectory_with_actions(
+            ["inspect_feedstock", "measure_contamination", "query_candidate_registry"]
+        ),
+    )
+
+    assert recommendation["primary_bottleneck"] == "contamination_artifact"
+    assert recommendation["recommended_family"] == "no_go"
+
+
+def test_cost_aware_requires_hypothesis_before_finalize() -> None:
+    policy = build_policy("cost_aware_heuristic")
+    action = policy.select_action(
+        observation={
+            "legal_next_actions": ["state_hypothesis", "finalize_recommendation"],
+            "artifacts": [
+                {
+                    "artifact_type": "inspection_note",
+                    "data": {"crystallinity_band": "high"},
+                },
+                {
+                    "artifact_type": "candidate_card",
+                    "data": {
+                        "candidate_family": "pretreat_then_single",
+                        "visible_score": 0.9,
+                    },
+                },
+                {
+                    "artifact_type": "assay_report",
+                    "title": "Pretreatment test report",
+                    "data": {"pretreatment_uplift": 0.4},
+                },
+            ],
+        },
+        trajectory=_trajectory_with_actions(
+            ["inspect_feedstock", "query_candidate_registry", "test_pretreatment"]
+        ),
+        rng=random.Random(0),
+    )
+
+    assert action.action_kind == "state_hypothesis"
+
+
+def test_expert_augmented_does_not_finalize_just_because_turns_elapsed() -> None:
+    policy = build_policy("expert_augmented_heuristic")
+    action = policy.select_action(
+        observation={
+            "legal_next_actions": ["state_hypothesis", "finalize_recommendation"],
+            "artifacts": [
+                {
+                    "artifact_type": "candidate_card",
+                    "data": {
+                        "candidate_family": "thermostable_single",
+                        "visible_score": 0.9,
+                    },
+                }
+            ],
+        },
+        trajectory=_trajectory_with_actions(
+            [
+                "inspect_feedstock",
+                "ask_expert",
+                "query_candidate_registry",
+                "query_literature",
+                "estimate_particle_size",
+            ]
+        ),
+        rng=random.Random(0),
+    )
+
+    assert action.action_kind == "state_hypothesis"
+
+
+def test_expert_augmented_policy_uses_structured_expert_guidance() -> None:
+    policy = build_policy("expert_augmented_heuristic")
+    action = policy.select_action(
+        observation={
+            "legal_next_actions": [
+                "run_thermostability_assay",
+                "test_pretreatment",
+                "run_hydrolysis_assay",
+            ],
+            "artifacts": [
+                {
+                    "artifact_type": "candidate_card",
+                    "data": {
+                        "candidate_family": "pretreat_then_single",
+                        "visible_score": 0.95,
+                    },
+                }
+            ],
+            "expert_inbox": [
+                {
+                    "expert_id": "wet_lab_lead",
+                    "summary": "Substrate accessibility and pretreatment leverage look like the highest-priority route.",
+                }
+            ],
+        },
+        trajectory=_trajectory_with_actions(["inspect_feedstock", "ask_expert", "query_candidate_registry"]),
+        rng=random.Random(0),
+    )
+
+    assert action.action_kind == "test_pretreatment"
+
+
+def test_structured_candidate_data_outweighs_summary_wording_noise() -> None:
+    policy = build_policy("cost_aware_heuristic")
+    base_observation = {
+        "legal_next_actions": ["run_hydrolysis_assay", "test_pretreatment", "run_thermostability_assay"],
+        "artifacts": [
+            {
+                "artifact_type": "inspection_note",
+                "summary": "This summary mentions thermo, but data says crystallinity is high.",
+                "data": {"crystallinity_band": "high"},
+            },
+            {
+                "artifact_type": "candidate_card",
+                "data": {
+                    "candidate_family": "pretreat_then_single",
+                    "visible_score": 0.9,
+                },
+            },
+            {
+                "artifact_type": "assay_report",
+                "title": "Pretreatment test report",
+                "summary": "Harmless wording drift toward thermal context.",
+                "data": {"pretreatment_uplift": 0.35},
+            },
+        ],
+    }
+
+    action = policy.select_action(
+        observation=base_observation,
+        trajectory=_trajectory_with_actions(["inspect_feedstock", "query_candidate_registry"]),
+        rng=random.Random(0),
+    )
+    assert action.action_kind == "test_pretreatment"

@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from common.terminal_labels import ASSAY_ROUTE_FAMILIES
 from models import BioMedAction
 from server.simulator.latent_state import LatentEpisodeState
 
@@ -69,12 +70,17 @@ class TransitionEffect:
     summary: str
     success: bool
     quality_score: float | None = None
+    uncertainty: float | None = None
     warnings: list[str] = field(default_factory=list)
     artifacts: list[TransitionArtifact] = field(default_factory=list)
     expert_replies: list[TransitionExpertReply] = field(default_factory=list)
     data: dict[str, Any] = field(default_factory=dict)
     budget_delta: float = 0.0
     time_delta_days: int = 0
+
+    def __post_init__(self) -> None:
+        if self.uncertainty is None:
+            self.uncertainty = _quality_to_uncertainty(self.quality_score)
 
 
 @dataclass
@@ -134,12 +140,17 @@ def _score_to_label(score: float) -> str:
     return "low"
 
 
+def _quality_to_uncertainty(quality_score: float | None) -> float | None:
+    if quality_score is None:
+        return None
+    return round(_clamp(1.0 - quality_score, 0.05, 0.95), 4)
+
+
 def _family_display_name(candidate_family: str) -> str:
     display = {
         "pretreat_then_single": "Pretreatment + single-enzyme route",
         "thermostable_single": "Thermostable single-enzyme route",
         "cocktail": "Enzyme cocktail route",
-        "economy_baseline": "Low-cost baseline route",
         "no_go": "No-go route",
     }
     return display.get(candidate_family, candidate_family.replace("_", " ").title())
@@ -147,11 +158,13 @@ def _family_display_name(candidate_family: str) -> str:
 
 def _family_from_action(action: BioMedAction, state: LatentEpisodeState) -> str:
     requested = action.parameters.get("candidate_family")
-    if isinstance(requested, str) and requested in state.intervention_truth.candidate_family_scores:
+    if (
+        isinstance(requested, str)
+        and requested in ASSAY_ROUTE_FAMILIES
+        and requested in state.intervention_truth.candidate_family_scores
+    ):
         return requested
-
-    # Safe default if the caller omitted a family.
-    return "thermostable_single"
+    raise ValueError("run_hydrolysis_assay requires a valid explicit candidate_family")
 
 
 def _bool_param(action: BioMedAction, key: str, default: bool = False) -> bool:
@@ -335,6 +348,7 @@ class BioMedTransitionEngine:
             penalized.quality_score = 0.5
         else:
             penalized.quality_score = round(penalized.quality_score * 0.6, 4)
+        penalized.uncertainty = _quality_to_uncertainty(penalized.quality_score)
         return penalized
 
     def _handle_inspect_feedstock(
@@ -406,6 +420,7 @@ class BioMedTransitionEngine:
     ) -> TransitionEffect:
         s.progress.stage = "triage"
         measured_band = s.substrate_truth.crystallinity_band
+        s.progress.mark_milestone("crystallinity_measured")
         measurement = {
             "crystallinity_band": measured_band,
             "confidence_band": _score_to_label(_band_to_score(measured_band)),
@@ -448,6 +463,7 @@ class BioMedTransitionEngine:
     ) -> TransitionEffect:
         s.progress.stage = "triage"
         contamination_band = s.substrate_truth.contamination_band
+        s.progress.mark_milestone("contamination_measured")
         measurement = {
             "contamination_band": contamination_band,
             "cleanup_priority": "high" if contamination_band == "high" else "medium",
@@ -490,6 +506,7 @@ class BioMedTransitionEngine:
     ) -> TransitionEffect:
         s.progress.stage = "triage"
         particle_size_band = s.substrate_truth.particle_size_band
+        s.progress.mark_milestone("particle_size_estimated")
         estimate = {
             "particle_size_band": particle_size_band,
             "accessibility_hint": "higher" if particle_size_band == "small" else "lower",
@@ -532,7 +549,7 @@ class BioMedTransitionEngine:
     ) -> TransitionEffect:
         s.progress.stage = "triage"
         s.progress.queried_literature = True
-        s.progress.mark_milestone("literature_review_started")
+        s.progress.mark_milestone("literature_reviewed")
 
         family = s.scenario_family
 
@@ -690,6 +707,7 @@ class BioMedTransitionEngine:
     ) -> TransitionEffect:
         s.progress.stage = "triage"
         truth = s.intervention_truth
+        s.progress.mark_milestone("stability_signal_estimated")
         stability_score = 0.78 if truth.best_intervention_family == "thermostable_single" else 0.42
         if truth.thermostability_bottleneck:
             stability_score -= 0.12
@@ -697,7 +715,7 @@ class BioMedTransitionEngine:
         signal = {
             "stability_signal_score": stability_score,
             "stability_signal_band": _score_to_label(stability_score),
-            "thermostability_risk": truth.thermostability_bottleneck,
+            "screening_context": "candidate registry stability screen",
         }
         s.progress.record_discovery("stability_signal_estimated", True)
         s.progress.record_discovery("stability_signal", signal)
@@ -737,7 +755,7 @@ class BioMedTransitionEngine:
     ) -> TransitionEffect:
         s.progress.stage = "assay"
         s.progress.ran_hydrolysis_assay = True
-        s.progress.mark_milestone("hydrolysis_assay_run")
+        s.progress.mark_milestone("activity_assay_run")
 
         candidate_family = _family_from_action(action, s)
         pretreated = _bool_param(action, "pretreated", default=False)
@@ -828,9 +846,7 @@ class BioMedTransitionEngine:
             "observed_conversion_fraction": observed_conversion,
             "interpretation": interpretation,
             "artifact_suspected": artifact_suspected,
-            "temperature_context": (
-                "stability-sensitive" if truth.thermostability_bottleneck else "standard"
-            ),
+            "assay_context": "standard hydrolysis screen",
         }
 
         s.progress.record_discovery("activity_assay_run", True)
@@ -881,6 +897,7 @@ class BioMedTransitionEngine:
     ) -> TransitionEffect:
         s.progress.stage = "assay"
         truth = s.intervention_truth
+        s.progress.mark_milestone("thermostability_assay_run")
         base_score = 0.8 if not truth.thermostability_bottleneck else 0.38
         if truth.best_intervention_family == "thermostable_single":
             base_score += 0.16
@@ -888,7 +905,7 @@ class BioMedTransitionEngine:
         assay_data = {
             "retention_fraction": observed_retention,
             "interpretation": _score_to_label(observed_retention),
-            "thermostability_bottleneck_risk": truth.thermostability_bottleneck,
+            "screening_context": "thermal stress retention screen",
         }
         s.progress.record_discovery("thermostability_assay_run", True)
         s.progress.record_discovery("thermostability_assay", assay_data)
@@ -929,6 +946,7 @@ class BioMedTransitionEngine:
         time_delta_days: int,
     ) -> TransitionEffect:
         s.progress.stage = "assay"
+        s.progress.mark_milestone("pretreatment_tested")
         sensitivity = _band_to_score(s.substrate_truth.pretreatment_sensitivity)
         uplift = round(_clamp(0.12 + (0.28 * sensitivity) + s.uniform(-0.05, 0.05), 0.0, 0.95), 4)
         assay_data = {
@@ -974,14 +992,15 @@ class BioMedTransitionEngine:
     ) -> TransitionEffect:
         s.progress.stage = "assay"
         truth = s.intervention_truth
+        s.progress.mark_milestone("cocktail_tested")
         synergy_score = 0.76 if truth.synergy_required else 0.34
         if truth.best_intervention_family == "cocktail":
             synergy_score += 0.10
         synergy_score = round(_clamp(synergy_score + s.uniform(-0.07, 0.07), 0.01, 0.98), 4)
         assay_data = {
             "synergy_score": synergy_score,
-            "synergy_required": truth.synergy_required,
             "interpretation": "strong synergy" if synergy_score >= 0.65 else "weak synergy",
+            "screening_context": "cocktail synergy comparison",
         }
         s.progress.record_discovery("cocktail_tested", True)
         s.progress.record_discovery("cocktail_result", assay_data)
@@ -1044,7 +1063,7 @@ class BioMedTransitionEngine:
             return expert_effect
 
         s.consult_expert(expert_id)
-        s.progress.mark_milestone(f"expert_consulted:{expert_id}")
+        s.progress.mark_milestone("expert_consulted")
 
         truth = s.intervention_truth
         misdirect = s.next_random() < belief.misdirection_risk
@@ -1141,6 +1160,7 @@ class BioMedTransitionEngine:
         time_delta_days: int,
     ) -> TransitionEffect:
         s.progress.stage = "decision"
+        s.progress.mark_milestone("hypothesis_stated")
         hypothesis = _string_param(
             action,
             "hypothesis",

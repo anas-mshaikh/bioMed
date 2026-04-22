@@ -43,18 +43,22 @@ class ProgressPotential:
 
     def completeness(self, state: object) -> float:
         discoveries = _discoveries(state)
+        has_characterization = bool(
+            discoveries.get("crystallinity_measured", False)
+            or discoveries.get("contamination_measured", False)
+            or discoveries.get("particle_size_estimated", False)
+        )
+        has_decision_quality_evidence = bool(
+            discoveries.get("activity_assay_run", False)
+            or discoveries.get("thermostability_assay_run", False)
+            or discoveries.get("pretreatment_tested", False)
+            or discoveries.get("cocktail_tested", False)
+        )
         core = [
             bool(discoveries.get("feedstock_inspected", False)),
-            bool(
-                discoveries.get("crystallinity_measured", False)
-                or discoveries.get("contamination_measured", False)
-                or discoveries.get("particle_size_estimated", False)
-            ),
+            has_characterization,
             bool(discoveries.get("candidate_registry_queried", False)),
-            bool(
-                discoveries.get("activity_assay_run", False)
-                or discoveries.get("thermostability_assay_run", False)
-            ),
+            has_decision_quality_evidence,
             bool(
                 discoveries.get("expert_consulted", False)
                 or discoveries.get("hypothesis_stated", False)

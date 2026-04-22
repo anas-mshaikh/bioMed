@@ -3,8 +3,8 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
-from uuid import uuid4
 
+from common.terminal_labels import completed_canonical_milestones
 from models import BioMedAction, BioMedObservation, BioMedVisibleState
 from server.simulator.observation_builder import BioMedObservationBuilder
 from server.rewards import RewardComputer
@@ -44,7 +44,6 @@ class BioMedEnvironment:
         self.observation_builder = BioMedObservationBuilder()
 
         self._episode_id: str | None = None
-        self._step_count: int = 0
         self._latent = None
 
     def reset(
@@ -54,14 +53,12 @@ class BioMedEnvironment:
         difficulty: str | None = None,
     ) -> BioMedObservation:
         resolved_seed = 0 if seed is None else seed
-        self._episode_id = str(uuid4())
-        self._step_count = 0
         self._latent = sample_episode_latent_state(
             seed=resolved_seed,
             scenario_family=scenario_family or "high_crystallinity",
             difficulty=difficulty or "easy",
         )
-        self._latent.episode_id = self._episode_id
+        self._episode_id = self._latent.episode_id
 
         bundle = self.observation_builder.build_reset_bundle(
             self._latent,
@@ -73,11 +70,21 @@ class BioMedEnvironment:
         if self._latent is None:
             raise RuntimeError("Call reset() before step().")
 
-        self._step_count += 1
-
         rule_result = self.rule_engine.validate_action(self._latent, action)
 
         if rule_result.hard_violations:
+            self._latent.progress.advance_step()
+            self._latent.append_history(
+                action_kind=action.action_kind,
+                summary=f"Blocked action: {'; '.join(rule_result.hard_messages)}",
+                budget_delta=0.0,
+                time_delta_days=0,
+                metadata={
+                    "blocked": True,
+                    "hard_violations": list(rule_result.hard_messages),
+                    "soft_violations": list(rule_result.soft_messages),
+                },
+            )
             reward_breakdown = self.reward_computer.invalid_action_penalty(rule_result)
             observation = self.observation_builder.build_invalid_action_observation(
                 latent=self._latent,
@@ -87,7 +94,7 @@ class BioMedEnvironment:
             return LocalStepResult(
                 observation=observation,
                 reward=reward_breakdown.total,
-                done=False,
+                done=self._latent.done,
                 reward_breakdown=reward_breakdown.to_dict(),
                 rule_code=rule_result.decision.rule_code,
                 hard_violations=list(rule_result.hard_messages),
@@ -143,13 +150,15 @@ class BioMedEnvironment:
 
         return BioMedVisibleState(
             episode_id=self._episode_id or "",
-            step_count=self._step_count,
+            step_count=self._latent.step_count,
             scenario_family=self._latent.scenario_family,
             difficulty=self._latent.difficulty,
             stage=self._latent.stage,
             spent_budget=self._latent.budget_spent,
             spent_time_days=self._latent.time_spent_days,
-            completed_milestones=[k for k, v in self._latent.discoveries.items() if bool(v)],
+            completed_milestones=completed_canonical_milestones(
+                self._latent.completed_milestones
+            ),
             history_length=len(self._latent.history),
         )
 

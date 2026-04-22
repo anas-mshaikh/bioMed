@@ -85,3 +85,15 @@ def test_contamination_truth_is_shared_between_evaluator_and_terminal_reward(
         recommendation=recommendation,
     )
     assert breakdown.components["bottleneck_score"] > 0.0
+
+
+def test_missing_decision_field_gets_no_stop_go_credit(reward_computer, high_crystallinity_latent) -> None:
+    breakdown = reward_computer.terminal_reward(
+        state=high_crystallinity_latent,
+        recommendation={
+            "primary_bottleneck": "substrate_accessibility",
+            "recommended_family": "pretreat_then_single",
+            "confidence": 0.6,
+        },
+    )
+    assert breakdown.components["stop_go_score"] == 0.0

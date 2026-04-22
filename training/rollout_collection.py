@@ -111,7 +111,7 @@ def run_single_episode(
 
     trajectory.metadata["final_visible_state"] = _state_dict(env)
     terminal_truth = _latent_truth_summary(env) or {}
-    trajectory.metadata["_terminal_truth"] = terminal_truth
+    trajectory.metadata["benchmark_truth"] = terminal_truth
     if capture_latent_truth:
         trajectory.metadata["terminal_truth"] = terminal_truth
     trajectory.metadata["terminated"] = done
@@ -162,13 +162,16 @@ def _write_outputs(
     rollouts_dir = output_dir / "rollouts"
     evals_dir = output_dir / "evals"
     replays_dir = output_dir / "replays"
+    private_dir = output_dir / "private_truth"
 
     rollouts_dir.mkdir(parents=True, exist_ok=True)
     evals_dir.mkdir(parents=True, exist_ok=True)
     replays_dir.mkdir(parents=True, exist_ok=True)
+    private_dir.mkdir(parents=True, exist_ok=True)
 
     dataset_path = rollouts_dir / f"{policy_name}.jsonl"
-    dataset.save_jsonl(dataset_path)
+    truth_sidecar_path = private_dir / f"{policy_name}_truth.json"
+    dataset.save_jsonl(dataset_path, truth_sidecar_path=truth_sidecar_path)
 
     summary = dataset.summary()
     metrics = BioMedEvaluationSuite.evaluate_dataset(dataset).to_dict()

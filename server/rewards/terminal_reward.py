@@ -154,7 +154,7 @@ class TerminalRewardEngine:
             return "no_go"
         return None
 
-    def _predicted_stop(self, recommendation: dict[str, Any]) -> bool:
+    def _predicted_stop(self, recommendation: dict[str, Any]) -> bool | None:
         decision = str(recommendation.get("decision", "") or "").lower()
         continue_exploration = recommendation.get("continue_exploration")
         if decision in {"stop", "no_go", "halt"}:
@@ -163,7 +163,7 @@ class TerminalRewardEngine:
             return False
         if not decision and isinstance(continue_exploration, bool):
             return not continue_exploration
-        return False
+        return None
 
     def _predicted_confidence(self, recommendation: dict[str, Any]) -> float:
         confidence = recommendation.get("confidence", 0.5)
@@ -200,15 +200,17 @@ class TerminalRewardEngine:
         return 0.0
 
     def _stop_go_score(
-        self, true_family: str, predicted_stop: bool, predicted_family: str | None
+        self, true_family: str, predicted_stop: bool | None, predicted_family: str | None
     ) -> float:
         if true_family == "no_go":
             return 1.0 if predicted_stop else 0.0
+        if predicted_stop is None:
+            return 0.0
         if predicted_stop:
             return 0.0
         if predicted_family:
             return 1.0
-        return 0.2
+        return 0.0
 
     def _calibration_score(self, correctness: float, confidence: float) -> float:
         if correctness >= 0.80:
@@ -239,15 +241,22 @@ class TerminalRewardEngine:
         score = 0.0
 
         if predicted_family == "cocktail":
-            if d.get("candidate_registry_queried", False) and d.get("activity_assay_run", False):
+            if d.get("candidate_registry_queried", False) and (
+                d.get("cocktail_tested", False) or d.get("activity_assay_run", False)
+            ):
                 score += 0.4
         elif predicted_family == "pretreat_then_single":
-            if d.get("crystallinity_measured", False) or d.get("pretreatment_tested", False):
+            if d.get("pretreatment_tested", False) or (
+                d.get("crystallinity_measured", False) and d.get("activity_assay_run", False)
+            ):
                 score += 0.4
         elif predicted_family == "thermostable_single":
-            if d.get("candidate_registry_queried", False) and (
-                d.get("stability_signal_estimated", False)
-                or d.get("thermostability_assay_run", False)
+            if (
+                d.get("candidate_registry_queried", False)
+                and (
+                    d.get("stability_signal_estimated", False)
+                    or d.get("thermostability_assay_run", False)
+                )
             ):
                 score += 0.4
         elif predicted_family == "no_go" or predicted_stop:

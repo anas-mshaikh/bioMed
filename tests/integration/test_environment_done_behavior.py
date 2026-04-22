@@ -19,6 +19,6 @@ def test_finalize_terminates_and_future_actions_are_blocked(fresh_env, strong_re
     blocked = fresh_env.step(BioMedAction(action_kind="inspect_feedstock", parameters={}))
     assert done_result.done is True
     assert fresh_env._latent.done is True
-    assert blocked.done is False
+    assert blocked.done is True
+    assert blocked.observation.done_reason == "final_decision_submitted"
     assert any("Episode is already complete" in warning for warning in blocked.observation.warnings)
-

@@ -65,7 +65,10 @@ def test_insufficient_budget_blocks_expensive_action(rule_engine, high_crystalli
     high_crystallinity_latent.budget_spent = high_crystallinity_latent.budget_total - 1.0
     result = rule_engine.validate_action(
         high_crystallinity_latent,
-        BioMedAction(action_kind="run_hydrolysis_assay", parameters={}),
+        BioMedAction(
+            action_kind="run_hydrolysis_assay",
+            parameters={"candidate_family": "thermostable_single"},
+        ),
     )
     assert result.decision.rule_code == "INSUFFICIENT_BUDGET"
 
@@ -77,4 +80,3 @@ def test_done_state_blocks_actions(rule_engine, high_crystallinity_latent) -> No
         BioMedAction(action_kind="inspect_feedstock", parameters={}),
     )
     assert result.decision.rule_code == "ACTION_AFTER_DONE"
-

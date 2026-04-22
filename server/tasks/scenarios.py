@@ -342,7 +342,6 @@ SCENARIO_LIBRARY: dict[ScenarioFamily, ScenarioTemplate] = {
             "pretreat_then_single": 0.78,
             "thermostable_single": 0.54,
             "cocktail": 0.50,
-            "economy_baseline": 0.34,
         },
         expert_focus_overrides={
             "wet_lab_lead": "pretreatment and assay practicality",
@@ -431,7 +430,6 @@ SCENARIO_LIBRARY: dict[ScenarioFamily, ScenarioTemplate] = {
             "pretreat_then_single": 0.45,
             "thermostable_single": 0.82,
             "cocktail": 0.58,
-            "economy_baseline": 0.36,
         },
         expert_focus_overrides={
             "wet_lab_lead": "bench assay execution and validation planning",
@@ -520,7 +518,6 @@ SCENARIO_LIBRARY: dict[ScenarioFamily, ScenarioTemplate] = {
             "pretreat_then_single": 0.68,
             "thermostable_single": 0.52,
             "cocktail": 0.50,
-            "economy_baseline": 0.42,
         },
         expert_focus_overrides={
             "wet_lab_lead": "sample quality and contamination diagnostics",
@@ -634,15 +631,10 @@ def _sample_intervention_truth(
     candidate_scores = _sample_candidate_family_scores(rng, template, difficulty_profile)
 
     # Ensure the family consistent with the sampled hidden truth remains competitive.
-    family_alias_map = {
-        "pretreat_then_single": "pretreat_then_single",
-        "thermostable_single": "thermostable_single",
-        "cocktail": "cocktail",
-        "no_go": "economy_baseline",
-    }
-    boost_key = family_alias_map[best_intervention]
-    if boost_key in candidate_scores:
-        candidate_scores[boost_key] = min(1.0, round(candidate_scores[boost_key] + 0.12, 4))
+    if best_intervention in candidate_scores:
+        candidate_scores[best_intervention] = min(
+            1.0, round(candidate_scores[best_intervention] + 0.12, 4)
+        )
 
     return LatentInterventionTruth(
         best_intervention_family=best_intervention,
@@ -841,6 +833,14 @@ def _apply_family_consistency_adjustments(
         if intervention.best_intervention_family != "thermostable_single":
             # Rare deviations are okay, but keep the family aligned most of the time.
             intervention.best_intervention_family = "thermostable_single"
+        if "thermostable_single" in intervention.candidate_family_scores:
+            intervention.candidate_family_scores["thermostable_single"] = min(
+                1.0,
+                round(intervention.candidate_family_scores["thermostable_single"] + 0.18, 4),
+            )
+            intervention.candidate_family_scores = _normalize_scores(
+                intervention.candidate_family_scores
+            )
         if substrate.contamination_band == "high":
             substrate.contamination_band = "medium"
 
