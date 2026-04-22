@@ -82,6 +82,9 @@ class BioMedEnv(EnvClient[BioMedAction, BioMedObservation, BioMedVisibleState]):
             "rationale": action.rationale,
         }
 
+        if action.expert_id is not None:
+            payload["expert_id"] = action.expert_id
+
         if action.confidence is not None:
             payload["confidence"] = action.confidence
 

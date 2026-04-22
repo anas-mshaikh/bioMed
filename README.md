@@ -1,255 +1,204 @@
 ---
-title: Biomed Environment Server
-emoji: 🎼
-colorFrom: gray
-colorTo: pink
+title: BioMed Benchmark Server
+emoji: 🧪
+colorFrom: teal
+colorTo: green
 sdk: docker
 pinned: false
 app_port: 8000
 base_path: /web
 tags:
   - openenv
+  - benchmark
+  - reinforcement-learning
 ---
 
-# Biomed Environment
+# BioMed
 
-A simple test environment that echoes back messages. Perfect for testing the env APIs as well as demonstrating environment usage patterns.
+BioMed is an OpenEnv benchmark for hidden-state PET bioremediation planning. The agent acts as a program lead under budget and time limits, gathers evidence through assays and expert consultations, and must submit a final program recommendation with the right intervention family, bottleneck diagnosis, and stop/go decision.
 
-## Quick Start
+This repository is not just a demo app. It contains:
+- an OpenEnv-compatible server in [server/app.py](server/app.py)
+- a hidden-state simulator and rule engine under [server/](server)
+- reward, rollout, replay, and evaluation utilities under [training/](training)
 
-The simplest way to use the Biomed environment is through the `BiomedEnv` class:
+## Benchmark shape
 
-```python
-from bioMed import BiomedAction, BiomedEnv
+### Partial observability
 
-try:
-    # Create environment from Docker image
-    bioMedenv = BiomedEnv.from_docker_image("bioMed-env:latest")
+The hidden truth includes scenario family, intervention-family viability, bottleneck cause, assay noise, and expert belief state. Public observations are intentionally limited to visible assay outputs, artifacts, warnings, and resource state.
 
-    # Reset
-    result = bioMedenv.reset()
-    print(f"Reset: {result.observation.echoed_message}")
+### Scenario families
 
-    # Send multiple messages
-    messages = ["Hello, World!", "Testing echo", "Final message"]
+Current scenario families are generated in [server/tasks/scenarios.py](server/tasks/scenarios.py):
+- `high_crystallinity`
+- `contamination_artifact`
+- `thermostability_bottleneck`
+- `no_go`
 
-    for msg in messages:
-        result = bioMedenv.step(BiomedAction(message=msg))
-        print(f"Sent: '{msg}'")
-        print(f"  → Echoed: '{result.observation.echoed_message}'")
-        print(f"  → Length: {result.observation.message_length}")
-        print(f"  → Reward: {result.reward}")
+### Action surface
 
-finally:
-    # Always clean up
-    bioMedenv.close()
-```
+The public action model is [models.py](models.py)`::BioMedAction`. Key action kinds include:
+- intake and triage: `inspect_feedstock`, `query_literature`, `query_candidate_registry`
+- evidence gathering: `measure_crystallinity`, `measure_contamination`, `estimate_particle_size`, `estimate_stability_signal`
+- intervention tests: `run_hydrolysis_assay`, `run_thermostability_assay`, `test_pretreatment`, `test_cocktail`
+- expert and decision actions: `ask_expert`, `state_hypothesis`, `finalize_recommendation`
 
-That's it! The `BiomedEnv.from_docker_image()` method handles:
-- Starting the Docker container
-- Waiting for the server to be ready
-- Connecting to the environment
-- Container cleanup when you call `close()`
+`run_hydrolysis_assay` requires an explicit `candidate_family` parameter. `ask_expert` requires a top-level `expert_id`.
 
-## Building the Docker Image
+### Observation and state
 
-Before using the environment, you need to build the Docker image:
+- [models.py](models.py)`::BioMedObservation` is the visible agent observation returned from `reset()` and `step()`.
+- [models.py](models.py)`::BioMedVisibleState` is the visible state returned by `state()`.
+- Hidden latent truth is not part of the public environment contract.
 
-```bash
-# From project root
-docker build -t bioMed-env:latest -f server/Dockerfile .
-```
+## Quick start
 
-## Deploying to Hugging Face Spaces
-
-You can easily deploy your OpenEnv environment to Hugging Face Spaces using the `openenv push` command:
+### Install
 
 ```bash
-# From the environment directory (where openenv.yaml is located)
-openenv push
-
-# Or specify options
-openenv push --namespace my-org --private
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
 ```
 
-The `openenv push` command will:
-1. Validate that the directory is an OpenEnv environment (checks for `openenv.yaml`)
-2. Prepare a custom build for Hugging Face Docker space (enables web interface)
-3. Upload to Hugging Face (ensuring you're logged in)
+### Judge path
 
-### Prerequisites
-
-- Authenticate with Hugging Face: The command will prompt for login if not already authenticated
-
-### Options
-
-- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
-- `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
-- `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
-- `--private`: Deploy the space as private (default: public)
-
-### Examples
+These are the minimum commands a reviewer should be able to run:
 
 ```bash
-# Push to your personal namespace (defaults to username/env-name from openenv.yaml)
-openenv push
-
-# Push to a specific repository
-openenv push --repo-id my-org/my-env
-
-# Push with a custom base image
-openenv push --base-image ghcr.io/meta-pytorch/openenv-base:latest
-
-# Push as a private space
-openenv push --private
-
-# Combine options
-openenv push --repo-id my-org/my-env --base-image custom-base:latest --private
-```
-
-After deployment, your space will be available at:
-`https://huggingface.co/spaces/<repo-id>`
-
-The deployed space includes:
-- **Web Interface** at `/web` - Interactive UI for exploring the environment
-- **API Documentation** at `/docs` - Full OpenAPI/Swagger interface
-- **Health Check** at `/health` - Container health monitoring
-- **WebSocket** at `/ws` - Persistent session endpoint for low-latency interactions
-
-## Environment Details
-
-### Action
-**BiomedAction**: Contains a single field
-- `message` (str) - The message to echo back
-
-### Observation
-**BiomedObservation**: Contains the echo response and metadata
-- `echoed_message` (str) - The message echoed back
-- `message_length` (int) - Length of the message
-- `reward` (float) - Reward based on message length (length × 0.1)
-- `done` (bool) - Always False for echo environment
-- `metadata` (dict) - Additional info like step count
-
-### Reward
-The reward is calculated as: `message_length × 0.1`
-- "Hi" → reward: 0.2
-- "Hello, World!" → reward: 1.3
-- Empty message → reward: 0.0
-
-## Advanced Usage
-
-### Connecting to an Existing Server
-
-If you already have a Biomed environment server running, you can connect directly:
-
-```python
-from bioMed import BiomedEnv
-
-# Connect to existing server
-bioMedenv = BiomedEnv(base_url="<ENV_HTTP_URL_HERE>")
-
-# Use as normal
-result = bioMedenv.reset()
-result = bioMedenv.step(BiomedAction(message="Hello!"))
-```
-
-Note: When connecting to an existing server, `bioMedenv.close()` will NOT stop the server.
-
-### Using the Context Manager
-
-The client supports context manager usage for automatic connection management:
-
-```python
-from bioMed import BiomedAction, BiomedEnv
-
-# Connect with context manager (auto-connects and closes)
-with BiomedEnv(base_url="http://localhost:8000") as env:
-    result = env.reset()
-    print(f"Reset: {result.observation.echoed_message}")
-    # Multiple steps with low latency
-    for msg in ["Hello", "World", "!"]:
-        result = env.step(BiomedAction(message=msg))
-        print(f"Echoed: {result.observation.echoed_message}")
-```
-
-The client uses WebSocket connections for:
-- **Lower latency**: No HTTP connection overhead per request
-- **Persistent session**: Server maintains your environment state
-- **Efficient for episodes**: Better for many sequential steps
-
-### Concurrent WebSocket Sessions
-
-The server supports multiple concurrent WebSocket connections. To enable this,
-modify `server/app.py` to use factory mode:
-
-```python
-# In server/app.py - use factory mode for concurrent sessions
-app = create_app(
-    BiomedEnvironment,  # Pass class, not instance
-    BiomedAction,
-    BiomedObservation,
-    max_concurrent_envs=4,  # Allow 4 concurrent sessions
-)
-```
-
-Then multiple clients can connect simultaneously:
-
-```python
-from bioMed import BiomedAction, BiomedEnv
-from concurrent.futures import ThreadPoolExecutor
-
-def run_episode(client_id: int):
-    with BiomedEnv(base_url="http://localhost:8000") as env:
-        result = env.reset()
-        for i in range(10):
-            result = env.step(BiomedAction(message=f"Client {client_id}, step {i}"))
-        return client_id, result.observation.message_length
-
-# Run 4 episodes concurrently
-with ThreadPoolExecutor(max_workers=4) as executor:
-    results = list(executor.map(run_episode, range(4)))
-```
-
-## Development & Testing
-
-### Direct Environment Testing
-
-Test the environment logic directly without starting the HTTP server:
-
-```bash
-# From the server directory
-python3 server/bioMed_environment.py
-```
-
-This verifies that:
-- Environment resets correctly
-- Step executes actions properly
-- State tracking works
-- Rewards are calculated correctly
-
-### Running Locally
-
-Run the server locally for development:
-
-```bash
+python3 -m pytest tests/unit tests/integration -q
+python3 -m pytest tests/api tests/e2e -q
+./.venv/bin/openenv validate
 uvicorn server.app:app --reload
 ```
 
-## Project Structure
+## Running locally
 
+Start the OpenEnv server:
+
+```bash
+uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
 ```
+
+Validate the manifest and server wiring:
+
+```bash
+./.venv/bin/openenv validate
+```
+
+### Typed client
+
+The canonical import surface is:
+
+```python
+from bioMed import BioMedAction, BioMedEnv
+
+env = BioMedEnv(base_url="http://localhost:8000")
+
+reset = env.sync().reset(seed=7)
+result = env.sync().step(
+    BioMedAction(action_kind="inspect_feedstock", parameters={})
+)
+print(result.observation.stage)
+env.close()
+```
+
+Example expert call:
+
+```python
+from bioMed import BioMedAction, BioMedEnv
+
+env = BioMedEnv(base_url="http://localhost:8000")
+env.sync().reset(seed=7)
+result = env.sync().step(
+    BioMedAction(
+        action_kind="ask_expert",
+        expert_id="wet_lab_lead",
+        parameters={},
+    )
+)
+print(result.observation.latest_output.summary)
+env.close()
+```
+
+## Rollout, replay, and evaluation
+
+Collect scripted-policy rollouts:
+
+```bash
+python3 -m training.rollout_collection --policy cost_aware_heuristic --episodes 8 --output-dir outputs/rollouts
+```
+
+Render replay markdown:
+
+```bash
+python3 -m training.replay outputs/rollouts/trajectories.jsonl --output-dir outputs/replays
+```
+
+Run benchmark evaluation on collected trajectories:
+
+```bash
+python3 -m training.evaluation outputs/rollouts/trajectories.jsonl
+```
+
+Saved public rollout JSONL is truth-clean by default. Benchmark truth needed for offline evaluation is written to a private sidecar.
+
+## Testing
+
+Test lanes:
+- `tests/unit`: deterministic local invariants
+- `tests/integration`: environment loop, reward, rollout, and hidden-truth discipline
+- `tests/api`: real OpenEnv HTTP/WebSocket contract tests against the shipped app
+- `tests/e2e`: slower smoke tests, replay/demo checks, and Docker build validation
+
+Run everything:
+
+```bash
+python3 -m pytest tests/unit tests/integration -q
+python3 -m pytest tests/api tests/e2e -q
+```
+
+## Docker and deployment
+
+Build the server image:
+
+```bash
+docker build -f server/Dockerfile -t biomed-env:latest .
+```
+
+OpenEnv manifest:
+- [openenv.yaml](openenv.yaml)
+
+Push to Hugging Face Spaces with the OpenEnv CLI:
+
+```bash
+openenv push
+```
+
+The Docker Space exposes:
+- `/health`
+- `/schema`
+- `/reset`, `/step`, `/state`
+- `/ws`
+
+## Project layout
+
+```text
 bioMed/
-├── .dockerignore         # Docker build exclusions
-├── __init__.py            # Module exports
-├── README.md              # This file
-├── openenv.yaml           # OpenEnv manifest
-├── pyproject.toml         # Project metadata and dependencies
-├── uv.lock                # Locked dependencies (generated)
-├── client.py              # BiomedEnv client
-├── models.py              # Action and Observation models
-└── server/
-    ├── __init__.py        # Server module exports
-    ├── bioMed_environment.py  # Core environment logic
-    ├── app.py             # FastAPI application (HTTP + WebSocket endpoints)
-    └── Dockerfile         # Container image definition
+├── bioMed/                  # Canonical public Python package
+├── common/                  # Shared benchmark semantics
+├── server/                  # Environment server, simulator, rules, rewards
+├── training/                # Rollouts, replay, evaluation, baselines
+├── tests/                   # Unit, integration, API, and e2e coverage
+├── client.py                # Typed OpenEnv client implementation
+├── models.py                # Public action / observation / state models
+├── openenv.yaml             # OpenEnv manifest
+└── pyproject.toml           # Packaging and dev tooling
 ```
+
+## Notes for reviewers
+
+- The environment server uses cookie-backed HTTP session isolation and per-WebSocket environment instances.
+- The benchmark is designed for reproducible same-seed episodes and hidden-state evaluation.
+- Reward and evaluation tooling exist, but this repository should still be judged first as an environment artifact.

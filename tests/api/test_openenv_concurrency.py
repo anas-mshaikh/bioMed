@@ -2,33 +2,34 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
-from openenv.core.env_server import create_fastapi_app
 
-from models import BioMedAction, BioMedObservation
-from server.bioMed_environment import BioMedEnvironment
+from server.app import app
 
 
 pytestmark = pytest.mark.api
 
 
-def _make_client() -> TestClient:
-    env = BioMedEnvironment()
-    app = create_fastapi_app(lambda: env, BioMedAction, BioMedObservation)
-    return TestClient(app)
-
-
 def test_separate_http_clients_do_not_share_state() -> None:
-    client_a = _make_client()
-    client_b = _make_client()
+    with TestClient(app) as client_a, TestClient(app) as client_b:
+        reset_a = client_a.post("/reset", json={"seed": 7})
+        reset_b = client_b.post("/reset", json={"seed": 9})
+        assert reset_a.status_code == 200
+        assert reset_b.status_code == 200
 
-    client_a.post("/reset", json={"seed": 7})
-    client_b.post("/reset", json={"seed": 9})
-    client_a.post("/step", json={"action": {"action_kind": "inspect_feedstock", "parameters": {}}})
+        step_a = client_a.post(
+            "/step",
+            json={"action": {"action_kind": "inspect_feedstock", "parameters": {}}},
+        )
+        assert step_a.status_code == 200
 
-    state_a = client_a.get("/state").json()
-    state_b = client_b.get("/state").json()
+        state_a = client_a.get("/state")
+        state_b = client_b.get("/state")
+        assert state_a.status_code == 200
+        assert state_b.status_code == 200
 
-    assert state_a["step_count"] == 1
-    assert state_b["step_count"] == 0
-    assert state_a["episode_id"] != state_b["episode_id"]
+        payload_a = state_a.json()
+        payload_b = state_b.json()
 
+        assert payload_a["step_count"] == 1
+        assert payload_b["step_count"] == 0
+        assert payload_a["episode_id"] != payload_b["episode_id"]

@@ -27,7 +27,9 @@ dev = [
 
 [tool.setuptools]
 py-modules = ["client", "models"]
-packages = ["server", "server.rules", "server.rewards", "server.simulator", "server.tasks", "training"]
+
+[tool.setuptools.packages.find]
+include = ["bioMed", "common", "server", "server.*", "training", "training.*"]
 
 [tool.ruff]
 line-length = 100
