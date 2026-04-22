@@ -283,7 +283,7 @@ class BioMedTransitionEngine:
             effect = self._apply_soft_violation_penalty(effect, soft_v)
 
         if action.action_kind == "finalize_recommendation" and not s.done:
-            s.mark_done("program_decision_submitted")
+            s.mark_done("final_decision_submitted")
 
         if s.should_force_terminal() and not s.done:
             if s.resources.budget_remaining <= 0 or s.resources.time_remaining_days <= 0:
@@ -1196,10 +1196,10 @@ class BioMedTransitionEngine:
         )
 
         s.progress.stage = "decision"
-        s.progress.submitted_program_decision = True
-        s.progress.mark_milestone("program_decision_submitted")
+        s.progress.final_decision_submitted = True
+        s.progress.mark_milestone("final_decision_submitted")
         s.progress.record_discovery(
-            "submitted_program_decision",
+            "final_decision",
             {
                 "proposed_intervention_family": proposed_intervention_family,
                 "claimed_bottleneck": claimed_bottleneck,

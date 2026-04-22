@@ -79,7 +79,7 @@ def build_sample_trajectory() -> Trajectory:
             "task_summary": "fixture summary",
             "budget_remaining": 98.0,
             "time_remaining_days": 19,
-            "done_reason": "program_decision_submitted",
+            "done_reason": "final_decision_submitted",
         },
         reward=5.25,
         done=True,

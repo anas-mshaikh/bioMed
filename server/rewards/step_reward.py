@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from models import BioMedAction
+from common.terminal_labels import EVIDENCE_MILESTONE_KEYS, milestone_count
 from server.rules import RuleCheckResult
 from server.simulator.transition import ACTION_COSTS, TransitionResult
 
@@ -51,8 +52,8 @@ def _history(state: object) -> list[dict[str, Any]]:
 def _milestone_delta(prev_state: object, next_state: object) -> int:
     prev = _discoveries(prev_state)
     nxt = _discoveries(next_state)
-    prev_done = {k for k, v in prev.items() if v}
-    next_done = {k for k, v in nxt.items() if v}
+    prev_done = {k for k in EVIDENCE_MILESTONE_KEYS if prev.get(k, False)}
+    next_done = {k for k in EVIDENCE_MILESTONE_KEYS if nxt.get(k, False)}
     return len(next_done - prev_done)
 
 
@@ -123,33 +124,41 @@ class StepRewardEngine:
 
     def _ordering_score(self, action_kind: str, state: object) -> float:
         d = _discoveries(state)
-        evidence_count = sum(int(v) for v in d.values())
+        evidence_count = milestone_count(d)
 
-        early_actions = {
-            "inspect_feedstock",
+        if action_kind == "inspect_feedstock":
+            return (
+                self.config.ordering_natural_reward
+                if evidence_count == 0
+                else self.config.ordering_acceptable_reward
+            )
+
+        if action_kind in {
             "measure_crystallinity",
             "measure_contamination",
             "estimate_particle_size",
-            "query_literature",
-            "query_candidate_registry",
-        }
-        mid_actions = {
-            "estimate_stability_signal",
-            "run_hydrolysis_assay",
-            "run_thermostability_assay",
-            "test_pretreatment",
-            "test_cocktail",
-            "ask_expert",
-        }
-        late_actions = {"state_hypothesis", "finalize_recommendation"}
+        }:
+            if d.get("feedstock_inspected", False):
+                return self.config.ordering_natural_reward
+            return self.config.ordering_premature_penalty
 
-        if action_kind in early_actions:
-            if evidence_count <= 4:
+        if action_kind == "query_literature":
+            if evidence_count <= 1:
+                return self.config.ordering_natural_reward
+            return self.config.ordering_acceptable_reward
+
+        if action_kind == "query_candidate_registry":
+            if d.get("feedstock_inspected", False) or d.get("literature_reviewed", False):
                 return self.config.ordering_natural_reward
             return self.config.ordering_acceptable_reward
 
         if action_kind == "run_hydrolysis_assay":
             if d.get("feedstock_inspected", False) or d.get("candidate_registry_queried", False):
+                return self.config.ordering_natural_reward
+            return self.config.ordering_premature_penalty
+
+        if action_kind == "estimate_stability_signal":
+            if d.get("candidate_registry_queried", False):
                 return self.config.ordering_natural_reward
             return self.config.ordering_premature_penalty
 
@@ -183,9 +192,6 @@ class StepRewardEngine:
                 return self.config.ordering_natural_reward
             return self.config.ordering_finalize_too_early_penalty
 
-        if action_kind in mid_actions | late_actions:
-            return self.config.ordering_acceptable_reward
-
         return 0.0
 
     def _information_gain_score(
@@ -199,10 +205,7 @@ class StepRewardEngine:
 
         milestone_gain = _milestone_delta(prev_state, next_state) * self.config.milestone_gain_bonus
 
-        evidence_tags = _safe_sequence(getattr(output, "evidence_tags", []))
-        tag_bonus = min(0.30, len(evidence_tags) * self.config.evidence_tag_gain_bonus)
-
-        raw = base_signal + milestone_gain + tag_bonus
+        raw = base_signal + milestone_gain
         return self.config.info_gain_weight * _clip(raw, 0.0, 1.5)
 
     def _efficiency_score(
@@ -267,7 +270,7 @@ class StepRewardEngine:
 
         expert_id = getattr(action, "expert_id", None)
         d = _discoveries(state)
-        evidence_count = sum(int(v) for v in d.values())
+        evidence_count = milestone_count(d)
 
         if expert_id == "wet_lab_lead":
             if d.get("feedstock_inspected", False) or d.get("activity_assay_run", False):
@@ -299,14 +302,15 @@ class StepRewardEngine:
 
     def _special_penalties(self, action_kind: str, state: object) -> float:
         d = _discoveries(state)
+        evidence_count = milestone_count(d)
         penalty = 0.0
 
         if action_kind == "finalize_recommendation" and not (
-            d.get("hypothesis_stated", False) or sum(int(v) for v in d.values()) >= 3
+            d.get("hypothesis_stated", False) or evidence_count >= 3
         ):
             penalty += self.config.ordering_finalize_too_early_penalty
 
-        if action_kind == "state_hypothesis" and sum(int(v) for v in d.values()) < 2:
+        if action_kind == "state_hypothesis" and evidence_count < 2:
             penalty += -0.10
 
         if action_kind == "ask_expert":

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from copy import deepcopy
 
 import pytest
 
@@ -54,3 +55,13 @@ def test_invalid_action_penalty_is_negative(reward_computer, rule_engine, high_c
     breakdown = reward_computer.invalid_action_penalty(rule_result)
     assert breakdown.total < 0
 
+
+def test_ordering_does_not_count_payload_blobs_as_extra_evidence(reward_computer, high_crystallinity_latent) -> None:
+    state = deepcopy(high_crystallinity_latent)
+    state.discoveries["feedstock_inspected"] = True
+    state.discoveries["feedstock_inspection"] = {"pet_form_hint": "bottle flake"}
+
+    step_engine = reward_computer.step_engine
+    score = step_engine._ordering_score("query_literature", state)
+
+    assert score == reward_computer.config.ordering_natural_reward

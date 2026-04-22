@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from models import BioMedAction
+from common.terminal_labels import milestone_count
 from server.simulator.latent_state import LatentEpisodeState
 from server.simulator.transition import ACTION_COSTS
 from .types import RuleCheckResult, RuleDecision, RuleSeverity, RuleViolation
@@ -446,24 +447,4 @@ class RuleEngine:
 
     @staticmethod
     def _evidence_count(latent: LatentEpisodeState) -> int:
-        d = latent.discoveries
-        return sum(
-            int(bool(v))
-            for k, v in d.items()
-            if k
-            in {
-                "feedstock_inspected",
-                "crystallinity_measured",
-                "contamination_measured",
-                "particle_size_estimated",
-                "literature_reviewed",
-                "candidate_registry_queried",
-                "stability_signal_estimated",
-                "activity_assay_run",
-                "thermostability_assay_run",
-                "pretreatment_tested",
-                "cocktail_tested",
-                "expert_consulted",
-                "hypothesis_stated",
-            }
-        )
+        return milestone_count(latent.discoveries)

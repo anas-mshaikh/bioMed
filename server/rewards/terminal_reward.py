@@ -6,7 +6,13 @@ from typing import Any
 from .reward_config import RewardConfig
 from .reward_types import RewardBreakdown
 from .shaping import ProgressPotential
-from common.terminal_labels import BOTTLENECK_ALIASES, FAMILY_ALIASES
+from common.terminal_labels import (
+    BOTTLENECK_ALIASES,
+    FAMILY_ALIASES,
+    infer_true_bottleneck,
+    infer_true_family,
+    milestone_count,
+)
 
 
 def _clip(value: float, lower: float, upper: float) -> float:
@@ -117,24 +123,20 @@ class TerminalRewardEngine:
         )
         artifact_risk = float(getattr(assay_noise, "artifact_risk", 0.0) or 0.0)
 
-        if best_family == "no_go":
-            return "no_go"
-        if contamination_band == "high" and artifact_risk >= 0.5:
-            return "contamination_artifact"
-        if synergy_required:
-            return "cocktail_synergy"
-        if thermo:
-            return "thermostability"
-        if crystallinity_band == "high" and pretreatment_sensitivity in {"medium", "high"}:
-            return "substrate_accessibility"
-        return "candidate_mismatch"
+        return infer_true_bottleneck(
+            best_intervention_family=str(best_family or ""),
+            thermostability_bottleneck=thermo,
+            synergy_required=synergy_required,
+            contamination_band=contamination_band,
+            artifact_risk=artifact_risk,
+            crystallinity_band=crystallinity_band,
+            pretreatment_sensitivity=pretreatment_sensitivity,
+        )
 
     def _true_intervention_family(self, state: object) -> str:
         catalyst_truth = getattr(state, "catalyst_truth", None)
         family = str(getattr(catalyst_truth, "best_intervention_family", "") or "")
-        if family in self.FAMILY_ALIASES:
-            return family
-        return "thermostable_single"
+        return infer_true_family(family)
 
     def _predicted_bottleneck(self, recommendation: dict[str, Any]) -> str | None:
         for key in ("primary_bottleneck", "bottleneck", "diagnosis"):
@@ -249,7 +251,7 @@ class TerminalRewardEngine:
             ):
                 score += 0.4
         elif predicted_family == "no_go" or predicted_stop:
-            if sum(int(v) for v in d.values()) >= 2:
+            if milestone_count(d) >= 2:
                 score += 0.4
 
         score += 0.3 * (1.0 - budget_ratio)

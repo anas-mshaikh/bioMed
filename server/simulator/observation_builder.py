@@ -329,10 +329,8 @@ def _build_artifacts_from_discoveries(state: LatentEpisodeState) -> list[Artifac
             expert_id = key.split(":", 1)[1]
             artifacts.append(_build_expert_artifact(state, expert_id, value))
 
-    if "submitted_program_decision" in discoveries and isinstance(
-        discoveries["submitted_program_decision"], dict
-    ):
-        artifacts.append(_build_decision_artifact(state, discoveries["submitted_program_decision"]))
+    if "final_decision" in discoveries and isinstance(discoveries["final_decision"], dict):
+        artifacts.append(_build_decision_artifact(state, discoveries["final_decision"]))
 
     return artifacts
 
@@ -385,7 +383,7 @@ def _build_terminal_warnings(state: LatentEpisodeState) -> list[str]:
         warnings.append("Episode terminated because budget or time was exhausted.")
     elif state.done_reason == "step_limit_reached":
         warnings.append("Episode terminated because the step limit was reached.")
-    elif state.done_reason == "program_decision_submitted":
+    elif state.done_reason == "final_decision_submitted":
         warnings.append("Episode terminated after the final program decision was submitted.")
 
     return warnings

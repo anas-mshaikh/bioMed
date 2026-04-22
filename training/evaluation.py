@@ -5,8 +5,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+from models import ACTION_KIND_VALUES
 from .trajectory import Trajectory, TrajectoryDataset
-from common.terminal_labels import BOTTLENECK_ALIASES, FAMILY_ALIASES
+from common.terminal_labels import (
+    BOTTLENECK_ALIASES,
+    FAMILY_ALIASES,
+    infer_true_bottleneck,
+    infer_true_family,
+)
 
 
 def _mean(values: list[float]) -> float:
@@ -32,7 +38,7 @@ def _last_visible_state(traj: Trajectory) -> dict[str, Any]:
 
 
 def _truth_summary(traj: Trajectory) -> dict[str, Any]:
-    truth = traj.metadata.get("terminal_truth", {})
+    truth = traj.metadata.get("terminal_truth", traj.metadata.get("_terminal_truth", {}))
     return truth if isinstance(truth, dict) else {}
 
 
@@ -163,22 +169,19 @@ def extract_truth_summary_from_latent(latent: Any) -> dict[str, Any]:
     pretreatment_sensitivity = str(getattr(substrate_truth, "pretreatment_sensitivity", "") or "")
     artifact_risk = float(getattr(assay_noise, "artifact_risk", 0.0) or 0.0)
 
-    if best_family == "no_go":
-        true_bottleneck = "no_go"
-    elif contamination_band == "high" and artifact_risk >= 0.5:
-        true_bottleneck = "contamination_artifact"
-    elif synergy:
-        true_bottleneck = "cocktail_synergy"
-    elif thermo:
-        true_bottleneck = "thermostability"
-    elif crystallinity_band == "high" and pretreatment_sensitivity in {"medium", "high"}:
-        true_bottleneck = "substrate_accessibility"
-    else:
-        true_bottleneck = "candidate_mismatch"
+    true_bottleneck = infer_true_bottleneck(
+        best_intervention_family=best_family,
+        thermostability_bottleneck=thermo,
+        synergy_required=synergy,
+        contamination_band=contamination_band,
+        artifact_risk=artifact_risk,
+        crystallinity_band=crystallinity_band,
+        pretreatment_sensitivity=pretreatment_sensitivity,
+    )
 
     return {
         "true_bottleneck": true_bottleneck,
-        "best_intervention_family": best_family or "thermostable_single",
+        "best_intervention_family": infer_true_family(best_family),
         "thermostability_bottleneck": thermo,
         "synergy_required": synergy,
         "contamination_band": contamination_band,
@@ -189,6 +192,7 @@ def extract_truth_summary_from_latent(latent: Any) -> dict[str, Any]:
 
 
 def classify_success(traj: Trajectory) -> bool:
+    has_final_recommendation = _has_final_recommendation(traj)
     bottleneck_match = _alias_match(
         _extract_predicted_bottleneck(traj),
         _extract_truth_bottleneck(traj),
@@ -201,7 +205,7 @@ def classify_success(traj: Trajectory) -> bool:
     )
     truth_family = _extract_truth_family(traj)
     stop_match = 0.0
-    if truth_family:
+    if truth_family and has_final_recommendation:
         if truth_family == "no_go":
             stop_match = 1.0 if _extract_predicted_stop(traj) else 0.0
         else:
@@ -299,7 +303,7 @@ class BioMedEvaluationSuite:
 
                 if str(step.action.get("action_kind", "")) == "ask_expert":
                     expert_uses += 1
-                    future = traj.steps[idx + 1 : idx + 3]
+                    future = traj.steps[idx + 1 :]
                     if any(
                         float(s.reward_breakdown.get("info_gain", 0.0) or 0.0) > 0.05
                         for s in future
@@ -336,13 +340,16 @@ class BioMedEvaluationSuite:
 
             visible_state = _last_visible_state(traj)
             spent_budget = float(visible_state.get("spent_budget", 0.0) or 0.0)
-            info_per_cost_values.append(info_gain_total / max(spent_budget, 1.0))
+            spent_time = float(visible_state.get("spent_time_days", 0.0) or 0.0)
+            info_per_cost_values.append(
+                info_gain_total / max(spent_budget + spent_time, 1.0)
+            )
             expert_scores.append((expert_useful / expert_uses) if expert_uses else 0.0)
 
         return {
             "workflow_validity_rate": _mean(no_hard_violation_episodes),
             "ordering_score": _mean(ordering_scores),
-            "action_diversity": len(unique_actions) / 14.0,
+            "action_diversity": len(unique_actions) / max(float(len(ACTION_KIND_VALUES)), 1.0),
             "mean_conclusion_confidence": _mean(confidences),
             "bottleneck_accuracy": _mean(bottleneck_scores),
             "intervention_family_accuracy": _mean(family_scores),

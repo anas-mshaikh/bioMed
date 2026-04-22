@@ -1,3 +1,6 @@
+from collections.abc import Mapping
+from typing import Any
+
 CANONICAL_BOTTLENECKS: tuple[str, ...] = (
     "substrate_accessibility",
     "thermostability",
@@ -27,7 +30,7 @@ FAMILY_RATIONALE_PHRASES: dict[str, str] = {
     "pretreat_then_single": "pretreat_then_single",
     "thermostable_single": "thermostable_single",
     "cocktail": "cocktail",
-    "no_go": "no_go",
+    "no_go": "no-go",
 }
 
 BOTTLENECK_ALIASES: dict[str, set[str]] = {
@@ -72,6 +75,64 @@ FAMILY_ALIASES: dict[str, set[str]] = {
     "cocktail": {"cocktail", "cocktail_route", "mixture"},
     "no_go": {"no_go", "stop", "halt"},
 }
+
+EVIDENCE_MILESTONE_KEYS: tuple[str, ...] = (
+    "feedstock_inspected",
+    "crystallinity_measured",
+    "contamination_measured",
+    "particle_size_estimated",
+    "literature_reviewed",
+    "candidate_registry_queried",
+    "stability_signal_estimated",
+    "activity_assay_run",
+    "thermostability_assay_run",
+    "pretreatment_tested",
+    "cocktail_tested",
+    "expert_consulted",
+    "hypothesis_stated",
+    "final_decision_submitted",
+)
+
+
+def milestone_count(discoveries: Mapping[str, Any] | Any) -> int:
+    if not isinstance(discoveries, Mapping):
+        return 0
+    return sum(1 for key in EVIDENCE_MILESTONE_KEYS if bool(discoveries.get(key, False)))
+
+
+def infer_true_bottleneck(
+    *,
+    best_intervention_family: str,
+    thermostability_bottleneck: bool,
+    synergy_required: bool,
+    contamination_band: str,
+    artifact_risk: float,
+    crystallinity_band: str,
+    pretreatment_sensitivity: str,
+) -> str:
+    family = str(best_intervention_family or "").strip().lower()
+    contamination_band = str(contamination_band or "").strip().lower()
+    crystallinity_band = str(crystallinity_band or "").strip().lower()
+    pretreatment_sensitivity = str(pretreatment_sensitivity or "").strip().lower()
+
+    if family == "no_go":
+        return "no_go"
+    if contamination_band == "high" and artifact_risk >= 0.18:
+        return "contamination_artifact"
+    if synergy_required:
+        return "cocktail_synergy"
+    if thermostability_bottleneck:
+        return "thermostability"
+    if crystallinity_band == "high" and pretreatment_sensitivity in {"medium", "high"}:
+        return "substrate_accessibility"
+    return "candidate_mismatch"
+
+
+def infer_true_family(best_intervention_family: str) -> str:
+    family = str(best_intervention_family or "").strip().lower()
+    if family in CANONICAL_FAMILIES:
+        return family
+    return "thermostable_single"
 
 
 def terminal_recommendation_rationale(

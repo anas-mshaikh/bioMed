@@ -155,6 +155,9 @@ class Trajectory:
         return str(self.steps[-1].action.get("action_kind")) if self.steps[-1].action else None
 
     def to_dict(self) -> dict[str, Any]:
+        public_metadata = {
+            str(key): value for key, value in self.metadata.items() if not str(key).startswith("_")
+        }
         return {
             "episode_id": self.episode_id,
             "seed": int(self.seed),
@@ -165,7 +168,7 @@ class Trajectory:
             "total_reward": self.total_reward,
             "num_steps": self.num_steps,
             "success": self.success,
-            "metadata": to_serializable(self.metadata),
+            "metadata": to_serializable(public_metadata),
         }
 
     @classmethod

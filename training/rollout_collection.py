@@ -57,7 +57,7 @@ def run_single_episode(
     scenario_family: str,
     difficulty: str,
     max_steps: int,
-    capture_latent_truth: bool = True,
+    capture_latent_truth: bool = False,
 ) -> Trajectory:
     policy.reset()
     rng = random.Random(seed)
@@ -110,23 +110,14 @@ def run_single_episode(
         step_idx += 1
 
     trajectory.metadata["final_visible_state"] = _state_dict(env)
-    trajectory.metadata["terminal_truth"] = (
-        _latent_truth_summary(env) if capture_latent_truth else {}
-    )
+    terminal_truth = _latent_truth_summary(env) or {}
+    trajectory.metadata["_terminal_truth"] = terminal_truth
+    if capture_latent_truth:
+        trajectory.metadata["terminal_truth"] = terminal_truth
     trajectory.metadata["terminated"] = done
     trajectory.metadata["max_steps_reached"] = not done and step_idx >= max_steps
     trajectory.success = classify_success(trajectory)
 
-    last = trajectory.final_step.action if trajectory.final_step else None
-    print(
-        {
-            "episode_id": trajectory.episode_id,
-            "num_steps": trajectory.num_steps,
-            "last_action": last,
-            "terminated": trajectory.metadata.get("terminated"),
-            "max_steps_reached": trajectory.metadata.get("max_steps_reached"),
-        }
-    )
     return trajectory
 
 
@@ -223,7 +214,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-steps", type=int, default=10)
     parser.add_argument("--seed-start", type=int, default=1000)
-    parser.add_argument("--capture-latent-truth", action="store_true", default=True)
+    parser.add_argument("--capture-latent-truth", action="store_true", default=False)
     parser.add_argument("--output-dir", type=Path, default=Path("outputs"))
     parser.add_argument("--replay-limit", type=int, default=5)
     return parser.parse_args()

@@ -26,7 +26,6 @@ class RewardConfig:
 
     # info-gain internals
     milestone_gain_bonus: float = 0.25
-    evidence_tag_gain_bonus: float = 0.10
     uncertainty_floor: float = 0.05
 
     # efficiency internals

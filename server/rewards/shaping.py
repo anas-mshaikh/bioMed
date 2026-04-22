@@ -59,8 +59,6 @@ class ProgressPotential:
                 discoveries.get("expert_consulted", False)
                 or discoveries.get("hypothesis_stated", False)
             ),
-            bool(
-                discoveries.get("final_decision_submitted", False) or getattr(state, "done", False)
-            ),
+            bool(discoveries.get("final_decision_submitted", False)),
         ]
         return sum(core) / len(core)

@@ -66,3 +66,22 @@ def test_correct_moderate_confidence_scores_above_wrong_high_confidence(
         },
     )
     assert correct.total > wrong.total
+
+
+def test_contamination_truth_is_shared_between_evaluator_and_terminal_reward(
+    reward_computer, contamination_latent
+) -> None:
+    truth = extract_truth_summary_from_latent(contamination_latent)
+    assert truth["true_bottleneck"] == "contamination_artifact"
+
+    recommendation = {
+        "primary_bottleneck": "contamination_artifact",
+        "recommended_family": truth["best_intervention_family"],
+        "decision": "stop" if truth["best_intervention_family"] == "no_go" else "proceed",
+        "confidence": 0.7,
+    }
+    breakdown = reward_computer.terminal_reward(
+        state=contamination_latent,
+        recommendation=recommendation,
+    )
+    assert breakdown.components["bottleneck_score"] > 0.0

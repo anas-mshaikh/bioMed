@@ -258,8 +258,7 @@ class CharacterizeFirstPolicy(BasePolicy):
         legal = _legal_actions(observation)
         if not legal:
             raise RuntimeError("No legal actions available for CharacterizeFirstPolicy.")
-
-        evidence_count = len(getattr(trajectory, "steps", []))
+        context = _trajectory_context(trajectory)
 
         preferred = [
             "inspect_feedstock",
@@ -280,26 +279,37 @@ class CharacterizeFirstPolicy(BasePolicy):
         if chosen is not None:
             return _build_action(chosen, observation, trajectory)
 
-        if (
-            evidence_count >= 3
-            and "state_hypothesis" in legal
-            and _count_taken(trajectory, "state_hypothesis") == 0
-        ):
+        if context["sample"] and context["candidate"] and context["high_signal"]:
+            if "state_hypothesis" in legal and _count_taken(trajectory, "state_hypothesis") == 0:
+                return _build_action("state_hypothesis", observation, trajectory)
+            if "finalize_recommendation" in legal:
+                return _build_action("finalize_recommendation", observation, trajectory)
+
+        if context["sample"] and not context["candidate"] and "query_candidate_registry" in legal:
+            return _build_action("query_candidate_registry", observation, trajectory)
+
+        if context["sample"] and not context["high_signal"]:
+            for action_kind in [
+                "run_thermostability_assay",
+                "run_hydrolysis_assay",
+                "test_pretreatment",
+                "test_cocktail",
+                "estimate_stability_signal",
+            ]:
+                if action_kind in legal and _count_taken(trajectory, action_kind) == 0:
+                    return _build_action(action_kind, observation, trajectory)
+
+        fallback_legal = [
+            action_kind
+            for action_kind in legal
+            if not (context["sample"] and action_kind == "inspect_feedstock")
+        ]
+        if fallback_legal:
+            return _build_action(fallback_legal[0], observation, trajectory)
+
+        if "state_hypothesis" in legal and _count_taken(trajectory, "state_hypothesis") == 0:
             return _build_action("state_hypothesis", observation, trajectory)
-
-        if evidence_count >= 4 and "finalize_recommendation" in legal:
-            return _build_action("finalize_recommendation", observation, trajectory)
-
-        last_action = None
-        for step in getattr(trajectory, "steps", [])[-1:]:
-            last_action = str(step.action.get("action_kind", "")) if step.action else None
-        for action_kind in legal:
-            if action_kind != last_action:
-                chosen = action_kind
-                break
-        else:
-            chosen = legal[0]
-        return _build_action(chosen, observation, trajectory)
+        return _build_action(legal[0], observation, trajectory)
 
 
 class CostAwareHeuristicPolicy(BasePolicy):

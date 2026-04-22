@@ -25,3 +25,14 @@ def test_redundant_no_progress_does_not_change_potential(high_crystallinity_late
     nxt = deepcopy(high_crystallinity_latent)
     assert potential.potential(nxt) == potential.potential(prev)
 
+
+def test_completeness_requires_explicit_final_decision(high_crystallinity_latent) -> None:
+    potential = ProgressPotential(RewardConfig())
+    done_only = deepcopy(high_crystallinity_latent)
+    done_only.done = True
+    done_only.done_reason = "resources_exhausted"
+
+    with_final = deepcopy(done_only)
+    with_final.discoveries["final_decision_submitted"] = True
+
+    assert potential.completeness(with_final) > potential.completeness(done_only)

@@ -70,6 +70,22 @@ def test_rollout_collection_persists_soft_violation_metadata() -> None:
     assert any(step.info["soft_violations"] for step in trajectory.steps)
 
 
+def test_rollout_collection_strips_hidden_truth_from_serialized_output_by_default() -> None:
+    dataset = collect_rollouts(
+        policy=build_policy("random_legal"),
+        episodes=1,
+        scenario_families=["high_crystallinity"],
+        difficulty="easy",
+        max_steps=3,
+        seed_start=105,
+        capture_latent_truth=False,
+    )
+    assert "_terminal_truth" in dataset.trajectories[0].metadata
+    payload = dataset.trajectories[0].to_dict()
+    assert "terminal_truth" not in payload["metadata"]
+    assert "_terminal_truth" not in payload["metadata"]
+
+
 def test_expert_rollout_persists_reward_and_rule_metadata() -> None:
     dataset = collect_rollouts(
         policy=build_policy("expert_augmented_heuristic"),

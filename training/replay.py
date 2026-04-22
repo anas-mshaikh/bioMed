@@ -10,7 +10,9 @@ def _fmt(value: float) -> str:
     return f"{value:.4f}"
 
 
-def render_trajectory_markdown(trajectory: Trajectory) -> str:
+def render_trajectory_markdown(
+    trajectory: Trajectory, *, show_hidden_truth: bool = False
+) -> str:
     lines: list[str] = []
     lines.append(f"# BioMed Replay — {trajectory.episode_id}")
     lines.append("")
@@ -23,8 +25,8 @@ def render_trajectory_markdown(trajectory: Trajectory) -> str:
     lines.append(f"- **Steps:** `{trajectory.num_steps}`")
     lines.append("")
 
-    terminal_truth = trajectory.metadata.get("terminal_truth", {})
-    if terminal_truth:
+    terminal_truth = trajectory.metadata.get("terminal_truth", trajectory.metadata.get("_terminal_truth", {}))
+    if show_hidden_truth and terminal_truth:
         lines.append("## Hidden truth summary")
         lines.append("")
         for key, value in terminal_truth.items():
@@ -95,6 +97,12 @@ def _parse_args() -> argparse.Namespace:
         "--output", type=Path, required=False, help="Optional markdown output path."
     )
     parser.add_argument(
+        "--show-hidden-truth",
+        action="store_true",
+        default=False,
+        help="Include hidden truth in the rendered markdown.",
+    )
+    parser.add_argument(
         "--index", type=int, default=0, help="For .jsonl datasets, which trajectory to render."
     )
     return parser.parse_args()
@@ -117,7 +125,7 @@ def main() -> None:
     else:
         raise ValueError("Input must be a .json trajectory or .jsonl dataset.")
 
-    markdown = render_trajectory_markdown(trajectory)
+    markdown = render_trajectory_markdown(trajectory, show_hidden_truth=args.show_hidden_truth)
 
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

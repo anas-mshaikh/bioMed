@@ -805,7 +805,7 @@ def _build_initial_progress() -> ExperimentProgress:
         queried_candidate_registry=False,
         ran_hydrolysis_assay=False,
         consulted_experts=set(),
-        submitted_program_decision=False,
+        final_decision_submitted=False,
         completed_milestones=[],
         discoveries={},
     )

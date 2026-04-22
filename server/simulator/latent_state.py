@@ -231,7 +231,7 @@ class ExperimentProgress:
     queried_candidate_registry: bool = False
     ran_hydrolysis_assay: bool = False
     consulted_experts: set[ExpertId] = field(default_factory=set)
-    submitted_program_decision: bool = False
+    final_decision_submitted: bool = False
 
     completed_milestones: list[str] = field(default_factory=list)
     discoveries: dict[str, Any] = field(default_factory=dict)
@@ -516,7 +516,7 @@ class LatentEpisodeState:
                 "queried_candidate_registry": self.progress.queried_candidate_registry,
                 "ran_hydrolysis_assay": self.progress.ran_hydrolysis_assay,
                 "consulted_experts": sorted(self.progress.consulted_experts),
-                "submitted_program_decision": self.progress.submitted_program_decision,
+                "final_decision_submitted": self.progress.final_decision_submitted,
                 "completed_milestones": list(self.progress.completed_milestones),
                 "discoveries": dict(self.progress.discoveries),
             },
