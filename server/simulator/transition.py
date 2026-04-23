@@ -633,7 +633,19 @@ class BioMedTransitionEngine:
             jitter = s.uniform(-0.08, 0.08)
             visible_score = _clamp(true_score + jitter, 0.0, 1.0)
 
-            if family_name == "pretreat_then_single":
+            if (
+                s.intervention_truth.best_intervention_family == "no_go"
+                or s.intervention_truth.economic_viability_band == "low"
+            ):
+                visible_score = _clamp((0.18 + (0.50 * true_score)) + (0.5 * jitter), 0.0, 0.62)
+
+            if (
+                s.intervention_truth.best_intervention_family == "no_go"
+                or s.intervention_truth.economic_viability_band == "low"
+            ):
+                cost_band = "high"
+                temp_band = "uncertain"
+            elif family_name == "pretreat_then_single":
                 cost_band = "medium"
                 temp_band = "moderate"
             elif family_name == "thermostable_single":

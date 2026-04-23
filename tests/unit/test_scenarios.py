@@ -44,3 +44,20 @@ def test_scenario_family_constraints_hold_for_thermo_and_contamination() -> None
     contamination = [sample_episode_latent_state(seed=20 + i, scenario_family="contamination_artifact", difficulty="easy") for i in range(8)]
     assert sum(int(item.intervention_truth.thermostability_bottleneck) for item in thermo) >= 5
     assert sum(int(item.substrate_truth.contamination_band == "high" or item.assay_noise.artifact_risk >= 0.5) for item in contamination) >= 4
+
+
+def test_no_go_family_samples_consistently() -> None:
+    cases = [
+        sample_episode_latent_state(seed=40 + i, scenario_family="no_go", difficulty="easy")
+        for i in range(6)
+    ]
+    assert all(case.intervention_truth.best_intervention_family == "no_go" for case in cases)
+    assert all(case.intervention_truth.economic_viability_band == "low" for case in cases)
+    assert all(not case.intervention_truth.thermostability_bottleneck for case in cases)
+    assert all(not case.intervention_truth.synergy_required for case in cases)
+
+
+def test_no_go_family_is_deterministic_for_same_seed() -> None:
+    left = sample_episode_latent_state(seed=77, scenario_family="no_go", difficulty="easy")
+    right = sample_episode_latent_state(seed=77, scenario_family="no_go", difficulty="easy")
+    assert left.internal_debug_snapshot() == right.internal_debug_snapshot()

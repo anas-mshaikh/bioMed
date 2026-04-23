@@ -12,10 +12,15 @@ pytestmark = pytest.mark.integration
 
 def test_cost_aware_heuristic_beats_random_on_fixed_easy_split() -> None:
     common = dict(
-        episodes=6,
-        scenario_families=["contamination_artifact", "high_crystallinity", "thermostability_bottleneck"],
+        episodes=8,
+        scenario_families=[
+            "contamination_artifact",
+            "high_crystallinity",
+            "thermostability_bottleneck",
+            "no_go",
+        ],
         difficulty="easy",
-        max_steps=6,
+        max_steps=7,
         seed_start=100,
         capture_latent_truth=True,
     )

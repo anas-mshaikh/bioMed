@@ -108,6 +108,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--index", type=int, default=0, help="For .jsonl datasets, which trajectory to render."
     )
+    parser.add_argument(
+        "--truth-sidecar",
+        type=Path,
+        required=False,
+        help="Optional private truth sidecar for dataset inputs.",
+    )
     return parser.parse_args()
 
 
@@ -117,7 +123,7 @@ def main() -> None:
     if args.input.suffix == ".json":
         trajectory = Trajectory.load(args.input)
     elif args.input.suffix == ".jsonl":
-        dataset = TrajectoryDataset.load_jsonl(args.input)
+        dataset = TrajectoryDataset.load_jsonl(args.input, truth_sidecar_path=args.truth_sidecar)
         if not dataset.trajectories:
             raise RuntimeError(f"No trajectories found in {args.input}")
         if args.index < 0 or args.index >= len(dataset.trajectories):

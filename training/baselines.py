@@ -104,6 +104,8 @@ def _extract_signals(observation: Any, trajectory: Any) -> dict[str, Any]:
     thermostability_retention = None
     stability_signal_score = None
     synergy_score = None
+    top_visible_score = 0.0
+    all_high_cost = bool(cards)
     contamination_high = False
     crystallinity_high = False
     artifact_suspected = False
@@ -116,6 +118,11 @@ def _extract_signals(observation: Any, trajectory: Any) -> dict[str, Any]:
             continue
         title = str(item.get("title", "")).lower()
         artifact_type = str(item.get("artifact_type", ""))
+        if artifact_type == "candidate_card":
+            raw_visible = data.get("visible_score")
+            if isinstance(raw_visible, (int, float)):
+                top_visible_score = max(top_visible_score, float(raw_visible))
+            all_high_cost = all_high_cost and str(data.get("cost_band", "")).lower() == "high"
         if artifact_type == "inspection_note":
             if str(data.get("contamination_band", "")).lower() == "high":
                 contamination_high = True
@@ -184,6 +191,7 @@ def _extract_signals(observation: Any, trajectory: Any) -> dict[str, Any]:
     ) or (stability_signal_score is not None and stability_signal_score < 0.55)
     cocktail_strong = synergy_score is not None and synergy_score >= 0.65
     pretreatment_promising = pretreatment_uplift >= 0.25
+    candidate_strength_low = bool(cards) and top_visible_score < 0.58
 
     if contamination_high:
         decisive_evidence += 1
@@ -192,6 +200,8 @@ def _extract_signals(observation: Any, trajectory: Any) -> dict[str, Any]:
     if cocktail_strong:
         decisive_evidence += 1
     if pretreatment_promising or crystallinity_high:
+        decisive_evidence += 1
+    if candidate_strength_low and all_high_cost:
         decisive_evidence += 1
 
     if expert_route_hint in ASSAY_ROUTE_FAMILIES:
@@ -207,6 +217,9 @@ def _extract_signals(observation: Any, trajectory: Any) -> dict[str, Any]:
         "pretreatment_promising": pretreatment_promising,
         "stability_low": stability_low,
         "cocktail_strong": cocktail_strong,
+        "candidate_strength_low": candidate_strength_low,
+        "all_high_cost": all_high_cost,
+        "top_visible_score": top_visible_score,
         "expert_route_hint": expert_route_hint,
         "artifact_suspected": artifact_suspected,
         "decisive_evidence": decisive_evidence,
@@ -302,6 +315,8 @@ def _first_unfinished(
 def _high_signal_priority(signals: dict[str, Any]) -> list[str]:
     if signals["expert_route_hint"] == "no_go" or signals["contamination_high"]:
         return ["measure_contamination", "ask_expert", "test_pretreatment", "run_hydrolysis_assay"]
+    if signals["candidate_strength_low"] and signals["all_high_cost"]:
+        return ["ask_expert", "estimate_stability_signal", "run_hydrolysis_assay"]
     if signals["cocktail_strong"] or signals["top_route"] == "cocktail":
         return ["test_cocktail", "run_hydrolysis_assay", "run_thermostability_assay"]
     if (
@@ -354,6 +369,22 @@ def _default_recommendation(observation: Any, trajectory: Any) -> dict[str, Any]
         family = "no_go"
         bottleneck = "contamination_artifact"
         decision = "stop"
+    elif (
+        signals["expert_route_hint"] == "no_go"
+        or (
+            signals["candidate_strength_low"]
+            and signals["all_high_cost"]
+            and context["high_signal"]
+            and not (
+                signals["pretreatment_promising"]
+                or signals["stability_low"]
+                or signals["cocktail_strong"]
+            )
+        )
+    ):
+        family = "no_go"
+        bottleneck = "no_go"
+        decision = "stop"
     elif signals["cocktail_strong"]:
         family = "cocktail"
         bottleneck = "cocktail_synergy"
@@ -400,7 +431,10 @@ def _default_recommendation(observation: Any, trajectory: Any) -> dict[str, Any]
 
 
 def _choose_expert(observation: Any, trajectory: Any) -> str:
-    text = _observation_text(observation)
+    signals = _extract_signals(observation, trajectory)
+    text = signals["text"]
+    if signals["candidate_strength_low"] and signals["all_high_cost"]:
+        return "cost_reviewer"
     if "thermo" in text or "stability" in text:
         return "computational_biologist"
     if "crystall" in text or "pretreat" in text:

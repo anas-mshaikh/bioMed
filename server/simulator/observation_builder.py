@@ -123,6 +123,11 @@ def _public_task_summary(state: LatentEpisodeState) -> str:
             base
             + " Investigate whether the observed evidence is trustworthy or distorted by sample-quality issues."
         )
+    if state.scenario_family == "no_go":
+        return (
+            base
+            + " Investigate whether any route is worth continued spend or whether the right move is to stop."
+        )
 
     return base
 

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import argparse
+import json
 import statistics
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 
@@ -73,6 +76,11 @@ def _all_actions(traj: Trajectory) -> list[str]:
     return [str(step.action.get("action_kind", "")) for step in traj.steps if step.action]
 
 
+def _trajectory_action_diversity(traj: Trajectory) -> float:
+    actions = {action for action in _all_actions(traj) if action}
+    return len(actions) / max(float(len(ACTION_KIND_VALUES)), 1.0)
+
+
 def _reward_component_mean(traj: Trajectory, name: str) -> float:
     values = []
     for step in traj.steps:
@@ -94,6 +102,65 @@ def _step_soft_violation_count(step: Any) -> int:
     info = step.info if isinstance(step.info, dict) else {}
     soft = info.get("soft_violations", [])
     return len(soft) if isinstance(soft, list) else 0
+
+
+def _obs_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def _extract_expert_hint(step: Any) -> str | None:
+    observation = _obs_dict(getattr(step, "observation", {}))
+    latest_output = observation.get("latest_output", {})
+    if not isinstance(latest_output, dict):
+        return None
+    if latest_output.get("output_type") != "expert_reply":
+        return None
+    data = latest_output.get("data", {})
+    if not isinstance(data, dict):
+        data = {}
+    suggested_next = str(data.get("suggested_next", "") or "").lower()
+    summary = str(data.get("summary", "") or latest_output.get("summary", "") or "").lower()
+    text = " ".join(part for part in (suggested_next, summary) if part)
+    if any(token in text for token in ("stop/go", "no-go", "no_go", "continued spend", "stop")):
+        return "no_go"
+    if any(token in text for token in ("cocktail", "synergy", "mixture")):
+        return "cocktail"
+    if any(token in text for token in ("pretreat", "accessibility", "cleanup")):
+        return "pretreat_then_single"
+    if any(token in text for token in ("stability", "thermo", "operating conditions")):
+        return "thermostable_single"
+    return None
+
+
+def _expert_hint_was_followed(traj: Trajectory, idx: int, hint: str | None) -> bool:
+    if hint is None:
+        return False
+
+    future_actions = [str(step.action.get("action_kind", "")) for step in traj.steps[idx + 1 :]]
+    recommendation = _last_recommendation(traj)
+    recommended_family = str(recommendation.get("recommended_family", "") or "").lower()
+    decision = str(recommendation.get("decision", "") or "").lower()
+
+    if hint == "no_go":
+        return (
+            recommended_family == "no_go"
+            or decision in {"stop", "no_go", "halt"}
+        )
+    if hint == "cocktail":
+        return "test_cocktail" in future_actions or recommended_family == "cocktail"
+    if hint == "pretreat_then_single":
+        return (
+            any(action in future_actions for action in {"test_pretreatment", "measure_crystallinity"})
+            or recommended_family == "pretreat_then_single"
+        )
+    if hint == "thermostable_single":
+        return (
+            any(action in future_actions for action in {"run_thermostability_assay", "estimate_stability_signal"})
+            or recommended_family == "thermostable_single"
+        )
+    return False
 
 
 def _extract_predicted_bottleneck(traj: Trajectory) -> str | None:
@@ -280,7 +347,7 @@ class BioMedEvaluationSuite:
 
         no_hard_violation_episodes = []
         ordering_scores = []
-        unique_actions: set[str] = set()
+        action_diversity_scores = []
         confidences = []
         bottleneck_scores = []
         family_scores = []
@@ -296,6 +363,7 @@ class BioMedEvaluationSuite:
             info_gain_total = 0.0
             expert_uses = 0
             expert_useful = 0
+            action_diversity_scores.append(_trajectory_action_diversity(traj))
 
             for idx, step in enumerate(traj.steps):
                 total_steps += 1
@@ -306,16 +374,12 @@ class BioMedEvaluationSuite:
                 if hard_count > 0:
                     hard_episode_count += hard_count
 
-                unique_actions.update(_all_actions(traj))
                 info_gain_total += float(step.reward_breakdown.get("info_gain", 0.0) or 0.0)
 
                 if str(step.action.get("action_kind", "")) == "ask_expert":
                     expert_uses += 1
-                    future = traj.steps[idx + 1 :]
-                    if any(
-                        float(s.reward_breakdown.get("info_gain", 0.0) or 0.0) > 0.05
-                        for s in future
-                    ):
+                    hint = _extract_expert_hint(step)
+                    if hint is not None and _expert_hint_was_followed(traj, idx, hint):
                         expert_useful += 1
 
             no_hard_violation_episodes.append(1.0 if hard_episode_count == 0 else 0.0)
@@ -358,7 +422,7 @@ class BioMedEvaluationSuite:
         return {
             "workflow_validity_rate": _mean(no_hard_violation_episodes),
             "ordering_score": _mean(ordering_scores),
-            "action_diversity": len(unique_actions) / max(float(len(ACTION_KIND_VALUES)), 1.0),
+            "action_diversity": _mean(action_diversity_scores),
             "mean_conclusion_confidence": _mean(confidences),
             "bottleneck_accuracy": _mean(bottleneck_scores),
             "intervention_family_accuracy": _mean(family_scores),
@@ -416,3 +480,26 @@ class BioMedEvaluationSuite:
             }
 
         return comparison
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Evaluate BioMed trajectory datasets.")
+    parser.add_argument("--input", type=Path, required=True, help="Trajectory dataset .jsonl path.")
+    parser.add_argument(
+        "--truth-sidecar",
+        type=Path,
+        required=False,
+        help="Optional private truth sidecar for offline benchmark evaluation.",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+    dataset = TrajectoryDataset.load_jsonl(args.input, truth_sidecar_path=args.truth_sidecar)
+    metrics = BioMedEvaluationSuite.evaluate_dataset(dataset).to_dict()
+    print(json.dumps(metrics, indent=2, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()

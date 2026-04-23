@@ -33,6 +33,39 @@ def test_rollout_collection_produces_usable_trajectories() -> None:
     assert "# BioMed Replay" in render_trajectory_markdown(dataset.trajectories[0])
 
 
+def test_collect_rollouts_closes_created_environments() -> None:
+    from server.bioMed_environment import BioMedEnvironment
+
+    class _CountingEnv(BioMedEnvironment):
+        def __init__(self) -> None:
+            super().__init__()
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    created: list[_CountingEnv] = []
+
+    def _factory() -> _CountingEnv:
+        env = _CountingEnv()
+        created.append(env)
+        return env
+
+    collect_rollouts(
+        policy=build_policy("random_legal"),
+        episodes=3,
+        scenario_families=["high_crystallinity"],
+        difficulty="easy",
+        max_steps=2,
+        seed_start=300,
+        capture_latent_truth=False,
+        env_factory=_factory,
+    )
+
+    assert len(created) == 3
+    assert all(env.closed for env in created)
+
+
 class _RepeatedLiteraturePolicy(BasePolicy):
     name = "repeat_literature"
 

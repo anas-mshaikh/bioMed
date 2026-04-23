@@ -20,6 +20,7 @@ ScenarioFamily = Literal[
     "high_crystallinity",
     "thermostability_bottleneck",
     "contamination_artifact",
+    "no_go",
 ]
 
 Difficulty = Literal["easy", "medium", "hard"]
@@ -28,6 +29,7 @@ SUPPORTED_SCENARIO_FAMILIES: tuple[ScenarioFamily, ...] = (
     "high_crystallinity",
     "thermostability_bottleneck",
     "contamination_artifact",
+    "no_go",
 )
 
 SUPPORTED_DIFFICULTIES: tuple[Difficulty, ...] = ("easy", "medium", "hard")
@@ -550,6 +552,94 @@ SCENARIO_LIBRARY: dict[ScenarioFamily, ScenarioTemplate] = {
             "cost_reviewer": 0.22,
         },
     ),
+    "no_go": ScenarioTemplate(
+        family="no_go",
+        title="Economically non-viable remediation program",
+        description=(
+            "The hidden truth is that continued spend is unlikely to justify itself. "
+            "Candidate routes remain technically plausible, but the program should converge "
+            "toward a stop/no-go decision rather than route optimization."
+        ),
+        pet_form_weights={
+            "bottle_flake": 0.34,
+            "film": 0.28,
+            "fiber": 0.38,
+        },
+        crystallinity_weights={
+            "low": 0.24,
+            "medium": 0.46,
+            "high": 0.30,
+        },
+        contamination_weights={
+            "low": 0.48,
+            "medium": 0.42,
+            "high": 0.10,
+        },
+        particle_size_weights={
+            "small": 0.22,
+            "medium": 0.46,
+            "large": 0.32,
+        },
+        pretreatment_sensitivity_weights={
+            "low": 0.42,
+            "medium": 0.38,
+            "high": 0.20,
+        },
+        best_intervention_weights={
+            "pretreat_then_single": 0.10,
+            "thermostable_single": 0.18,
+            "cocktail": 0.08,
+            "no_go": 0.64,
+        },
+        thermostability_bottleneck_probability=0.12,
+        activity_bottleneck_probability=0.22,
+        synergy_required_probability=0.10,
+        economic_viability_weights={
+            "low": 0.82,
+            "medium": 0.16,
+            "high": 0.02,
+        },
+        repeatability_weights={
+            "low": 0.18,
+            "medium": 0.54,
+            "high": 0.28,
+        },
+        candidate_family_score_bias={
+            "pretreat_then_single": 0.34,
+            "thermostable_single": 0.36,
+            "cocktail": 0.28,
+        },
+        expert_focus_overrides={
+            "wet_lab_lead": "technical validation before committing more spend",
+            "computational_biologist": "candidate weakness and uncertainty under poor margins",
+            "process_engineer": "scale-up friction and operating burden",
+            "cost_reviewer": "stop/go threshold and capital discipline",
+        },
+        expert_blind_spots={
+            "wet_lab_lead": "program-level economics",
+            "computational_biologist": "operational cost burden",
+            "process_engineer": "subtle route-level upside",
+            "cost_reviewer": "fine-grained assay interpretation",
+        },
+        expert_base_confidence_bias={
+            "wet_lab_lead": 0.61,
+            "computational_biologist": 0.58,
+            "process_engineer": 0.67,
+            "cost_reviewer": 0.76,
+        },
+        expert_base_misdirection_risk={
+            "wet_lab_lead": 0.09,
+            "computational_biologist": 0.13,
+            "process_engineer": 0.08,
+            "cost_reviewer": 0.06,
+        },
+        expert_knows_true_bottleneck_probability={
+            "wet_lab_lead": 0.26,
+            "computational_biologist": 0.22,
+            "process_engineer": 0.44,
+            "cost_reviewer": 0.82,
+        },
+    ),
 }
 
 
@@ -588,6 +678,7 @@ def resolve_scenario_family(
             "high_crystallinity": 1.0,
             "thermostability_bottleneck": 1.0,
             "contamination_artifact": 1.0,
+            "no_go": 0.7,
         },
     )
 
@@ -852,6 +943,26 @@ def _apply_family_consistency_adjustments(
         assay.false_negative_risk = max(assay.false_negative_risk, 0.12)
         if intervention.best_intervention_family == "no_go":
             intervention.economic_viability_band = "low"
+
+    elif family == "no_go":
+        intervention.best_intervention_family = "no_go"
+        intervention.thermostability_bottleneck = False
+        intervention.activity_bottleneck = False
+        intervention.synergy_required = False
+        intervention.economic_viability_band = "low"
+        intervention.candidate_family_scores = {
+            "pretreat_then_single": 0.34,
+            "thermostable_single": 0.30,
+            "cocktail": 0.22,
+        }
+        if substrate.contamination_band == "high":
+            substrate.contamination_band = "medium"
+        if substrate.crystallinity_band == "high":
+            substrate.crystallinity_band = "medium"
+        if substrate.pretreatment_sensitivity == "high":
+            substrate.pretreatment_sensitivity = "medium"
+        assay.artifact_risk = min(assay.artifact_risk, 0.14)
+        assay.false_negative_risk = max(assay.false_negative_risk, 0.10)
 
 
 def sample_episode_latent_state(

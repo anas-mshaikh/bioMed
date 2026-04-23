@@ -138,15 +138,20 @@ def collect_rollouts(
         scenario_family = scenario_families[i % len(scenario_families)]
         seed = seed_start + i
         env = env_factory()
-        trajectory = run_single_episode(
-            env=env,
-            policy=policy,
-            seed=seed,
-            scenario_family=scenario_family,
-            difficulty=difficulty,
-            max_steps=max_steps,
-            capture_latent_truth=capture_latent_truth,
-        )
+        try:
+            trajectory = run_single_episode(
+                env=env,
+                policy=policy,
+                seed=seed,
+                scenario_family=scenario_family,
+                difficulty=difficulty,
+                max_steps=max_steps,
+                capture_latent_truth=capture_latent_truth,
+            )
+        finally:
+            close = getattr(env, "close", None)
+            if callable(close):
+                close()
         dataset.add(trajectory)
 
     return dataset
@@ -213,7 +218,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--scenario-families",
         nargs="+",
-        default=["high_crystallinity", "thermostability_bottleneck", "contamination_artifact"],
+        default=[
+            "high_crystallinity",
+            "thermostability_bottleneck",
+            "contamination_artifact",
+            "no_go",
+        ],
     )
     parser.add_argument("--max-steps", type=int, default=10)
     parser.add_argument("--seed-start", type=int, default=1000)

@@ -36,6 +36,8 @@ Current scenario families are generated in [server/tasks/scenarios.py](server/ta
 - `thermostability_bottleneck`
 - `no_go`
 
+`no_go` is a true scenario family, not just a terminal label.
+
 ### Action surface
 
 The public action model is [models.py](models.py)`::BioMedAction`. Key action kinds include:
@@ -80,6 +82,8 @@ Start the OpenEnv server:
 ```bash
 uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
 ```
+
+For stateful interactive use, prefer the WebSocket client path. HTTP endpoints remain available for health/schema/debug and simple control flows.
 
 Validate the manifest and server wiring:
 
@@ -127,19 +131,19 @@ env.close()
 Collect scripted-policy rollouts:
 
 ```bash
-python3 -m training.rollout_collection --policy cost_aware_heuristic --episodes 8 --output-dir outputs/rollouts
+python3 -m training.rollout_collection --policy cost_aware_heuristic --episodes 8 --output-dir outputs
 ```
 
 Render replay markdown:
 
 ```bash
-python3 -m training.replay outputs/rollouts/trajectories.jsonl --output-dir outputs/replays
+python3 -m training.replay --input outputs/rollouts/cost_aware_heuristic.jsonl --truth-sidecar outputs/private_truth/cost_aware_heuristic_truth.json --output outputs/replays/cost_aware_heuristic.md
 ```
 
 Run benchmark evaluation on collected trajectories:
 
 ```bash
-python3 -m training.evaluation outputs/rollouts/trajectories.jsonl
+python3 -m training.evaluation --input outputs/rollouts/cost_aware_heuristic.jsonl --truth-sidecar outputs/private_truth/cost_aware_heuristic_truth.json
 ```
 
 Saved public rollout JSONL is truth-clean by default. Benchmark truth needed for offline evaluation is written to a private sidecar.
@@ -199,6 +203,7 @@ bioMed/
 
 ## Notes for reviewers
 
-- The environment server uses cookie-backed HTTP session isolation and per-WebSocket environment instances.
+- The benchmark-grade stateful path is the WebSocket endpoint and typed client.
+- HTTP endpoints remain available and isolated, but they are documented as secondary/debug-safe rather than the main benchmark interaction mode.
 - The benchmark is designed for reproducible same-seed episodes and hidden-state evaluation.
 - Reward and evaluation tooling exist, but this repository should still be judged first as an environment artifact.

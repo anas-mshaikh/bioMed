@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from models import BioMedAction
+from models import ACTION_KIND_VALUES, BioMedAction
 from training.evaluation import BioMedEvaluationSuite, classify_success
 from training.trajectory import Trajectory, TrajectoryDataset
 
@@ -22,6 +22,43 @@ def test_benchmark_metrics_and_grouping_work(sample_trajectory) -> None:
     assert bundle.benchmark["workflow_validity_rate"] >= 0.0
     assert "high_crystallinity" in bundle.by_scenario_family
     assert classify_success(sample_trajectory) is True
+
+
+def test_scenario_breakdown_accepts_no_go_family() -> None:
+    trajectory = Trajectory(
+        episode_id="no-go-breakdown",
+        seed=99,
+        scenario_family="no_go",
+        difficulty="easy",
+        policy_name="fixture",
+        metadata={
+            "terminal_truth": {
+                "true_bottleneck": "no_go",
+                "best_intervention_family": "no_go",
+            }
+        },
+    )
+    trajectory.add_step(
+        action=BioMedAction(
+            action_kind="finalize_recommendation",
+            parameters={
+                "recommendation": {
+                    "primary_bottleneck": "no_go",
+                    "recommended_family": "no_go",
+                    "decision": "stop",
+                    "confidence": 0.7,
+                }
+            },
+        ),
+        observation={"stage": "done", "done_reason": "final_decision_submitted"},
+        reward=2.0,
+        done=True,
+        reward_breakdown={"terminal": 2.0},
+        info={"rule_code": None, "hard_violations": [], "soft_violations": []},
+        visible_state={"spent_budget": 3.0, "spent_time_days": 1},
+    )
+    breakdown = BioMedEvaluationSuite.scenario_breakdown(TrajectoryDataset([trajectory]))
+    assert "no_go" in breakdown
 
 
 def test_benchmark_metrics_require_persisted_reward_breakdowns() -> None:
@@ -244,7 +281,17 @@ def test_expert_usefulness_reflects_later_downstream_info_gain() -> None:
     )
     trajectory.add_step(
         action=BioMedAction(action_kind="ask_expert", expert_id="wet_lab_lead", parameters={}),
-        observation={"stage": "triage"},
+        observation={
+            "stage": "triage",
+            "latest_output": {
+                "output_type": "expert_reply",
+                "summary": "Received expert guidance from wet_lab_lead.",
+                "data": {
+                    "suggested_next": "validate thermostability-aware performance",
+                    "summary": "Stability-aware validation should come next.",
+                },
+            },
+        },
         reward=0.1,
         done=False,
         reward_breakdown={"validity": 0.3, "info_gain": 0.0},
@@ -252,22 +299,13 @@ def test_expert_usefulness_reflects_later_downstream_info_gain() -> None:
         visible_state={"spent_budget": 2.0, "spent_time_days": 0},
     )
     trajectory.add_step(
-        action=BioMedAction(action_kind="query_literature", parameters={}),
-        observation={"stage": "candidate_search"},
+        action=BioMedAction(action_kind="run_thermostability_assay", parameters={}),
+        observation={"stage": "assay"},
         reward=0.2,
-        done=False,
-        reward_breakdown={"validity": 0.3, "info_gain": 0.0, "ordering": 0.2},
-        info={"rule_code": None, "hard_violations": [], "soft_violations": []},
-        visible_state={"spent_budget": 3.0, "spent_time_days": 1},
-    )
-    trajectory.add_step(
-        action=BioMedAction(action_kind="query_candidate_registry", parameters={}),
-        observation={"stage": "candidate_search"},
-        reward=0.7,
         done=False,
         reward_breakdown={"validity": 0.3, "info_gain": 0.4, "ordering": 0.2},
         info={"rule_code": None, "hard_violations": [], "soft_violations": []},
-        visible_state={"spent_budget": 4.0, "spent_time_days": 1},
+        visible_state={"spent_budget": 3.0, "spent_time_days": 1},
     )
     trajectory.add_step(
         action=BioMedAction(
@@ -290,4 +328,89 @@ def test_expert_usefulness_reflects_later_downstream_info_gain() -> None:
     )
 
     metrics = BioMedEvaluationSuite.benchmark_metrics(TrajectoryDataset([trajectory]))
-    assert metrics["expert_usefulness_score"] > 0.0
+    assert metrics["expert_usefulness_score"] == 1.0
+
+
+def test_expert_usefulness_requires_following_the_hint() -> None:
+    trajectory = Trajectory(
+        episode_id="expert-misaligned",
+        seed=31,
+        scenario_family="high_crystallinity",
+        difficulty="easy",
+        policy_name="fixture",
+        metadata={
+            "terminal_truth": {
+                "true_bottleneck": "cocktail_synergy",
+                "best_intervention_family": "cocktail",
+            }
+        },
+    )
+    trajectory.add_step(
+        action=BioMedAction(action_kind="ask_expert", expert_id="wet_lab_lead", parameters={}),
+        observation={
+            "stage": "triage",
+            "latest_output": {
+                "output_type": "expert_reply",
+                "summary": "Received expert guidance from wet_lab_lead.",
+                "data": {
+                    "suggested_next": "compare cocktail against single-route baseline",
+                    "summary": "Single-route reasoning may be missing a combinational effect.",
+                },
+            },
+        },
+        reward=0.1,
+        done=False,
+        reward_breakdown={"validity": 0.3, "info_gain": 0.0},
+        info={"rule_code": None, "hard_violations": [], "soft_violations": []},
+        visible_state={"spent_budget": 1.0, "spent_time_days": 0},
+    )
+    trajectory.add_step(
+        action=BioMedAction(action_kind="query_literature", parameters={}),
+        observation={"stage": "candidate_search"},
+        reward=0.5,
+        done=False,
+        reward_breakdown={"validity": 0.3, "info_gain": 0.5},
+        info={"rule_code": None, "hard_violations": [], "soft_violations": []},
+        visible_state={"spent_budget": 3.0, "spent_time_days": 0},
+    )
+
+    metrics = BioMedEvaluationSuite.benchmark_metrics(TrajectoryDataset([trajectory]))
+    assert metrics["expert_usefulness_score"] == 0.0
+
+
+def test_action_diversity_is_mean_per_trajectory_not_dataset_union() -> None:
+    metadata = {
+        "terminal_truth": {
+            "true_bottleneck": "thermostability",
+            "best_intervention_family": "thermostable_single",
+        }
+    }
+    first = Trajectory(
+        episode_id="diversity-a",
+        seed=1,
+        scenario_family="high_crystallinity",
+        difficulty="easy",
+        policy_name="fixture",
+        metadata=metadata,
+    )
+    second = Trajectory(
+        episode_id="diversity-b",
+        seed=2,
+        scenario_family="high_crystallinity",
+        difficulty="easy",
+        policy_name="fixture",
+        metadata=metadata,
+    )
+
+    for trajectory, action_kind in ((first, "inspect_feedstock"), (second, "query_literature")):
+        trajectory.add_step(
+            action=BioMedAction(action_kind=action_kind, parameters={}),
+            observation={"stage": "triage"},
+            reward=0.1,
+            done=False,
+            reward_breakdown={"validity": 0.1},
+            visible_state={"spent_budget": 1.0, "spent_time_days": 0},
+        )
+
+    metrics = BioMedEvaluationSuite.benchmark_metrics(TrajectoryDataset([first, second]))
+    assert metrics["action_diversity"] == pytest.approx(1.0 / float(len(ACTION_KIND_VALUES)))

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -142,14 +141,12 @@ def contamination_latent():
 
 
 @pytest.fixture
-def no_go_latent(contamination_latent):
-    latent = deepcopy(contamination_latent)
-    latent.intervention_truth.best_intervention_family = "no_go"
-    latent.intervention_truth.thermostability_bottleneck = False
-    latent.intervention_truth.synergy_required = False
-    latent.substrate_truth.contamination_band = "high"
-    latent.assay_noise.artifact_risk = 0.7
-    return latent
+def no_go_latent():
+    return sample_episode_latent_state(
+        seed=17,
+        scenario_family="no_go",
+        difficulty="easy",
+    )
 
 
 @pytest.fixture
