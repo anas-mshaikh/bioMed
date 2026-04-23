@@ -34,3 +34,7 @@ def test_cost_aware_heuristic_beats_random_on_fixed_easy_split() -> None:
     assert heuristic_ds.summary()["success_rate"] > random_ds.summary()["success_rate"]
     assert heuristic_metrics["ordering_score"] > random_metrics["ordering_score"]
     assert heuristic_metrics["info_per_cost"] > 0.0
+
+    by_family = BioMedEvaluationSuite.scenario_breakdown(heuristic_ds)
+    for family in common["scenario_families"]:
+        assert by_family[family]["success_rate"] > 0.0

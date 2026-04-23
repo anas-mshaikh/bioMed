@@ -143,6 +143,7 @@ class ExpertMessage(BaseModel):
     summary: str
     confidence: float | None = None
     priority: Priority = "medium"
+    data: dict[str, Any] = Field(default_factory=dict)
 
     def model_post_init(self, __context: Any) -> None:
         if self.expert_id not in EXPERT_ID_VALUES:
@@ -152,6 +153,8 @@ class ExpertMessage(BaseModel):
         _validate_probability(self.confidence, "confidence")
         if self.priority not in PRIORITY_VALUES:
             raise ValueError(f"priority must be one of {PRIORITY_VALUES}, got {self.priority!r}")
+        if not isinstance(self.data, dict):
+            raise TypeError(f"data must be a dict, got {type(self.data).__name__}")
 
 
 class BioMedAction(Action):

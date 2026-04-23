@@ -92,6 +92,45 @@ def test_finalize_requires_discriminative_evidence_for_positive_ordering(
     assert score < 0.0
 
 
+def test_hydrolysis_ordering_depends_on_route_relevant_evidence(
+    reward_computer, high_crystallinity_latent
+) -> None:
+    base_state = deepcopy(high_crystallinity_latent)
+    base_state.discoveries["feedstock_inspected"] = True
+    base_state.discoveries["candidate_registry_queried"] = True
+
+    generic = reward_computer.step_engine._ordering_score(
+        BioMedAction(
+            action_kind="run_hydrolysis_assay",
+            parameters={"candidate_family": "pretreat_then_single"},
+        ),
+        base_state,
+    )
+
+    correct_route = deepcopy(base_state)
+    correct_route.discoveries["crystallinity_measured"] = True
+    correct_route_score = reward_computer.step_engine._ordering_score(
+        BioMedAction(
+            action_kind="run_hydrolysis_assay",
+            parameters={"candidate_family": "pretreat_then_single"},
+        ),
+        correct_route,
+    )
+
+    wrong_route = deepcopy(base_state)
+    wrong_route.discoveries["stability_signal_estimated"] = True
+    wrong_route_score = reward_computer.step_engine._ordering_score(
+        BioMedAction(
+            action_kind="run_hydrolysis_assay",
+            parameters={"candidate_family": "pretreat_then_single"},
+        ),
+        wrong_route,
+    )
+
+    assert correct_route_score > generic
+    assert correct_route_score > wrong_route_score
+
+
 def test_repeated_same_route_hydrolysis_is_not_positive(reward_computer, high_crystallinity_latent) -> None:
     state = deepcopy(high_crystallinity_latent)
     state.discoveries["feedstock_inspected"] = True
@@ -149,3 +188,28 @@ def test_information_gain_uses_uncertainty(reward_computer, high_crystallinity_l
     )
 
     assert high_score > low_score
+
+
+def test_meta_actions_do_not_get_positive_validity_without_progress(
+    reward_computer, high_crystallinity_latent
+) -> None:
+    no_progress_effect = TransitionEffect(
+        effect_type="decision",
+        summary="decision",
+        success=True,
+        quality_score=0.8,
+    )
+    score_finalize = reward_computer.step_engine._validity_score(
+        no_progress_effect, "finalize_recommendation", 0
+    )
+    score_hypothesis = reward_computer.step_engine._validity_score(
+        no_progress_effect, "state_hypothesis", 0
+    )
+
+    progressed = reward_computer.step_engine._validity_score(
+        no_progress_effect, "finalize_recommendation", 1
+    )
+
+    assert score_finalize == 0.0
+    assert score_hypothesis == 0.0
+    assert progressed > 0.0

@@ -10,9 +10,7 @@ def _fmt(value: float) -> str:
     return f"{value:.4f}"
 
 
-def render_trajectory_markdown(
-    trajectory: Trajectory, *, show_hidden_truth: bool = False
-) -> str:
+def render_trajectory_markdown(trajectory: Trajectory, *, show_hidden_truth: bool = False) -> str:
     lines: list[str] = []
     lines.append(f"# BioMed Replay — {trajectory.episode_id}")
     lines.append("")
@@ -25,10 +23,7 @@ def render_trajectory_markdown(
     lines.append(f"- **Steps:** `{trajectory.num_steps}`")
     lines.append("")
 
-    terminal_truth = trajectory.metadata.get(
-        "terminal_truth",
-        trajectory.metadata.get("benchmark_truth", trajectory.metadata.get("_terminal_truth", {})),
-    )
+    terminal_truth = trajectory.benchmark_truth() if hasattr(trajectory, "benchmark_truth") else {}
     if show_hidden_truth and terminal_truth:
         lines.append("## Hidden truth summary")
         lines.append("")

@@ -22,4 +22,5 @@ def test_training_input_smoke_path() -> None:
     trajectory = dataset.trajectories[0]
     assert trajectory.steps
     assert isinstance(trajectory.total_reward, float)
-    assert trajectory.metadata["terminal_truth"]
+    assert trajectory.benchmark_truth()
+    assert "terminal_truth" not in trajectory.metadata

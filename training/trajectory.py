@@ -106,6 +106,7 @@ class Trajectory:
     steps: list[TrajectoryStep] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     success: bool | None = None
+    _benchmark_truth: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def add_step(
         self,
@@ -155,7 +156,9 @@ class Trajectory:
         return str(self.steps[-1].action.get("action_kind")) if self.steps[-1].action else None
 
     def benchmark_truth(self) -> dict[str, Any]:
-        truth = self.metadata.get("benchmark_truth", self.metadata.get("terminal_truth", {}))
+        truth = self._benchmark_truth or self.metadata.get(
+            "benchmark_truth", self.metadata.get("terminal_truth", {})
+        )
         return dict(truth) if isinstance(truth, Mapping) else {}
 
     def to_dict(self, *, include_benchmark_truth: bool = False) -> dict[str, Any]:
@@ -241,7 +244,7 @@ class TrajectoryDataset:
         for trajectory in self.trajectories:
             truth = payload.get(trajectory.episode_id)
             if isinstance(truth, Mapping):
-                trajectory.metadata["benchmark_truth"] = dict(truth)
+                trajectory._benchmark_truth = dict(truth)
 
     def save_jsonl(
         self,

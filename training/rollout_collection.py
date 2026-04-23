@@ -111,9 +111,7 @@ def run_single_episode(
 
     trajectory.metadata["final_visible_state"] = _state_dict(env)
     terminal_truth = _latent_truth_summary(env) or {}
-    trajectory.metadata["benchmark_truth"] = terminal_truth
-    if capture_latent_truth:
-        trajectory.metadata["terminal_truth"] = terminal_truth
+    trajectory._benchmark_truth = terminal_truth
     trajectory.metadata["terminated"] = done
     trajectory.metadata["max_steps_reached"] = not done and step_idx >= max_steps
     trajectory.success = classify_success(trajectory)

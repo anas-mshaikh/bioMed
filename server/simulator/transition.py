@@ -1082,6 +1082,7 @@ class BioMedTransitionEngine:
 
         if belief.knows_true_bottleneck and not misdirect:
             if truth.best_intervention_family == "pretreat_then_single":
+                guidance_class = "pretreat_then_single"
                 summary = (
                     "The main risk appears upstream of catalyst choice. I would test "
                     "substrate accessibility and pretreatment leverage before over-indexing "
@@ -1089,18 +1090,21 @@ class BioMedTransitionEngine:
                 )
                 suggested_next = "inspect or validate pretreatment leverage"
             elif truth.best_intervention_family == "thermostable_single":
+                guidance_class = "thermostable_single"
                 summary = (
                     "I suspect the route looks better on paper than under operating conditions. "
                     "Stability-aware validation should come before broad exploratory branching."
                 )
                 suggested_next = "validate thermostability-aware performance"
             elif truth.best_intervention_family == "cocktail":
+                guidance_class = "cocktail"
                 summary = (
                     "Single-route reasoning may be missing a combinational effect. "
                     "I would keep mixture synergy on the table."
                 )
                 suggested_next = "compare cocktail against single-route baseline"
             else:
+                guidance_class = "no_go"
                 summary = (
                     "The evidence may not justify continued spend. Preserve optionality "
                     "and be ready to recommend a no-go."
@@ -1119,6 +1123,14 @@ class BioMedTransitionEngine:
                     f"One blind spot to watch is {belief.blind_spot or 'none obvious'}."
                 )
             suggested_next = belief.preferred_focus
+            guidance_class = (
+                "no_go"
+                if any(
+                    token in str(belief.preferred_focus or "").lower()
+                    for token in ("stop", "no-go", "continued spend")
+                )
+                else None
+            )
             priority = "medium"
 
         expert_data = {
@@ -1126,6 +1138,7 @@ class BioMedTransitionEngine:
             "suggested_next": suggested_next,
             "preferred_focus": belief.preferred_focus,
             "blind_spot": belief.blind_spot,
+            "guidance_class": guidance_class,
         }
 
         expert_data["summary"] = summary

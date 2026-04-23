@@ -265,7 +265,7 @@ def test_info_per_cost_uses_budget_and_time() -> None:
     assert fast_metrics["info_per_cost"] > slow_metrics["info_per_cost"]
 
 
-def test_expert_usefulness_reflects_later_downstream_info_gain() -> None:
+def test_expert_usefulness_follows_structured_guidance_not_summary_wording() -> None:
     trajectory = Trajectory(
         episode_id="expert-fixture",
         seed=3,
@@ -285,10 +285,11 @@ def test_expert_usefulness_reflects_later_downstream_info_gain() -> None:
             "stage": "triage",
             "latest_output": {
                 "output_type": "expert_reply",
-                "summary": "Received expert guidance from wet_lab_lead.",
+                "summary": "Received expert guidance from wet_lab_lead with unrelated wording.",
                 "data": {
+                    "guidance_class": "thermostable_single",
                     "suggested_next": "validate thermostability-aware performance",
-                    "summary": "Stability-aware validation should come next.",
+                    "summary": "This phrasing can change without affecting the guidance class.",
                 },
             },
         },
@@ -353,6 +354,7 @@ def test_expert_usefulness_requires_following_the_hint() -> None:
                 "output_type": "expert_reply",
                 "summary": "Received expert guidance from wet_lab_lead.",
                 "data": {
+                    "guidance_class": "cocktail",
                     "suggested_next": "compare cocktail against single-route baseline",
                     "summary": "Single-route reasoning may be missing a combinational effect.",
                 },
@@ -414,3 +416,45 @@ def test_action_diversity_is_mean_per_trajectory_not_dataset_union() -> None:
 
     metrics = BioMedEvaluationSuite.benchmark_metrics(TrajectoryDataset([first, second]))
     assert metrics["action_diversity"] == pytest.approx(1.0 / float(len(ACTION_KIND_VALUES)))
+
+
+def test_compare_datasets_flags_metric_schema_mismatch(monkeypatch) -> None:
+    sample_trajectory = Trajectory(
+        episode_id="schema-left",
+        seed=1,
+        scenario_family="high_crystallinity",
+        difficulty="easy",
+        policy_name="fixture",
+        metadata={
+            "terminal_truth": {
+                "true_bottleneck": "thermostability",
+                "best_intervention_family": "thermostable_single",
+            }
+        },
+    )
+    base = TrajectoryDataset([sample_trajectory])
+    sample_trajectory.add_step(
+        action=BioMedAction(action_kind="inspect_feedstock", parameters={}),
+        observation={"stage": "triage"},
+        reward=0.1,
+        done=False,
+        reward_breakdown={"validity": 0.1},
+        visible_state={"spent_budget": 1.0, "spent_time_days": 0},
+    )
+
+    right = TrajectoryDataset([Trajectory.from_dict(sample_trajectory.to_dict(include_benchmark_truth=True))])
+    right.trajectories[0].metadata["terminal_truth"] = sample_trajectory.metadata["terminal_truth"]
+
+    original = BioMedEvaluationSuite.evaluate_dataset
+
+    def _patched(dataset):
+        bundle = original(dataset)
+        if dataset is right:
+            bundle.benchmark = dict(bundle.benchmark)
+            bundle.benchmark["extra_metric"] = 1.0
+        return bundle
+
+    monkeypatch.setattr(BioMedEvaluationSuite, "evaluate_dataset", staticmethod(_patched))
+
+    with pytest.raises(ValueError, match="Metric schema mismatch"):
+        BioMedEvaluationSuite.compare_datasets(base, right)

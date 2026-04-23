@@ -12,6 +12,8 @@ from common.terminal_labels import (
     infer_true_bottleneck,
     infer_true_family,
     milestone_count,
+    recommendation_has_explicit_go_semantics,
+    recommendation_has_explicit_stop_semantics,
 )
 
 
@@ -23,6 +25,13 @@ def _discoveries(state: object) -> dict[str, bool]:
     raw = getattr(state, "discoveries", {})
     if isinstance(raw, Mapping):
         return {str(k): bool(v) for k, v in raw.items()}
+    return {}
+
+
+def _raw_discoveries(state: object) -> dict[str, Any]:
+    raw = getattr(state, "discoveries", {})
+    if isinstance(raw, Mapping):
+        return dict(raw)
     return {}
 
 
@@ -74,7 +83,12 @@ class TerminalRewardEngine:
             true_family,
             self.FAMILY_ALIASES,
         )
-        stop_go_score = self._stop_go_score(true_family, predicted_stop, predicted_family)
+        stop_go_score = self._stop_go_score(
+            true_family,
+            predicted_stop,
+            predicted_family,
+            recommendation_dict,
+        )
         correctness = (0.40 * bottleneck_score) + (0.40 * family_score) + (0.20 * stop_go_score)
         calibration_score = self._calibration_score(correctness, confidence)
         cost_realism = self._cost_realism_score(state, predicted_family, predicted_stop)
@@ -150,19 +164,15 @@ class TerminalRewardEngine:
             value = recommendation.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip().lower()
-        if recommendation.get("decision") == "stop":
+        if recommendation_has_explicit_stop_semantics(recommendation):
             return "no_go"
         return None
 
     def _predicted_stop(self, recommendation: dict[str, Any]) -> bool | None:
-        decision = str(recommendation.get("decision", "") or "").lower()
-        continue_exploration = recommendation.get("continue_exploration")
-        if decision in {"stop", "no_go", "halt"}:
+        if recommendation_has_explicit_stop_semantics(recommendation):
             return True
-        if decision in {"proceed", "continue", "go"}:
+        if recommendation_has_explicit_go_semantics(recommendation):
             return False
-        if not decision and isinstance(continue_exploration, bool):
-            return not continue_exploration
         return None
 
     def _predicted_confidence(self, recommendation: dict[str, Any]) -> float:
@@ -200,11 +210,15 @@ class TerminalRewardEngine:
         return 0.0
 
     def _stop_go_score(
-        self, true_family: str, predicted_stop: bool | None, predicted_family: str | None
+        self,
+        true_family: str,
+        predicted_stop: bool | None,
+        predicted_family: str | None,
+        recommendation: dict[str, Any],
     ) -> float:
         if true_family == "no_go":
-            return 1.0 if predicted_stop else 0.0
-        if predicted_stop is None:
+            return 1.0 if recommendation_has_explicit_stop_semantics(recommendation) else 0.0
+        if not recommendation_has_explicit_go_semantics(recommendation):
             return 0.0
         if predicted_stop:
             return 0.0
@@ -230,6 +244,7 @@ class TerminalRewardEngine:
         predicted_stop: bool,
     ) -> float:
         d = _discoveries(state)
+        raw_discoveries = _raw_discoveries(state)
         budget_total = float(getattr(state, "budget_total", 1.0) or 1.0)
         budget_spent = float(getattr(state, "budget_spent", 0.0) or 0.0)
         time_total = float(getattr(state, "time_total_days", 1.0) or 1.0)
@@ -251,16 +266,37 @@ class TerminalRewardEngine:
             ):
                 score += 0.4
         elif predicted_family == "thermostable_single":
-            if (
-                d.get("candidate_registry_queried", False)
-                and (
-                    d.get("stability_signal_estimated", False)
-                    or d.get("thermostability_assay_run", False)
-                )
+            if d.get("candidate_registry_queried", False) and (
+                d.get("stability_signal_estimated", False)
+                or d.get("thermostability_assay_run", False)
             ):
                 score += 0.4
         elif predicted_family == "no_go" or predicted_stop:
-            if milestone_count(d) >= 2:
+            shortlist = raw_discoveries.get("candidate_shortlist", [])
+            if isinstance(shortlist, list):
+                weak_high_cost = any(
+                    isinstance(item, Mapping)
+                    and float(item.get("visible_score", 0.0) or 0.0) < 0.58
+                    and str(item.get("cost_band", "")).lower() == "high"
+                    for item in shortlist
+                )
+            else:
+                weak_high_cost = False
+            expert_replies = [
+                value
+                for key, value in raw_discoveries.items()
+                if str(key).startswith("expert_reply:") and isinstance(value, Mapping)
+            ]
+            has_cost_guidance = any(
+                str(reply.get("expert_id", "")).lower() == "cost_reviewer"
+                or str(reply.get("guidance_class", "")).lower() == "no_go"
+                for reply in expert_replies
+            )
+            if d.get("candidate_registry_queried", False) and weak_high_cost:
+                score += 0.25
+            if has_cost_guidance:
+                score += 0.15
+            if d.get("candidate_registry_queried", False) and weak_high_cost and has_cost_guidance:
                 score += 0.4
 
         score += 0.3 * (1.0 - budget_ratio)

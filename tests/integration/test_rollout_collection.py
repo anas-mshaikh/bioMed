@@ -114,7 +114,8 @@ def test_rollout_collection_strips_hidden_truth_from_serialized_output_by_defaul
         seed_start=105,
         capture_latent_truth=False,
     )
-    assert "benchmark_truth" in dataset.trajectories[0].metadata
+    assert "benchmark_truth" not in dataset.trajectories[0].metadata
+    assert dataset.trajectories[0].benchmark_truth()
     payload = dataset.trajectories[0].to_dict()
     assert "terminal_truth" not in payload["metadata"]
     assert "benchmark_truth" not in payload["metadata"]
@@ -139,7 +140,7 @@ def test_saved_dataset_requires_truth_sidecar_for_reloaded_evaluation(tmp_path) 
     assert "benchmark_truth" not in reloaded_public.trajectories[0].metadata
     with pytest.raises(ValueError, match="truth summaries"):
         BioMedEvaluationSuite.benchmark_metrics(reloaded_public)
-    assert reloaded_private.trajectories[0].metadata.get("benchmark_truth")
+    assert reloaded_private.trajectories[0].benchmark_truth()
     assert BioMedEvaluationSuite.benchmark_metrics(reloaded_private) == BioMedEvaluationSuite.benchmark_metrics(dataset)
 
 

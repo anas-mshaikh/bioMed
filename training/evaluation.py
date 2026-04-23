@@ -15,6 +15,8 @@ from common.terminal_labels import (
     FAMILY_ALIASES,
     infer_true_bottleneck,
     infer_true_family,
+    recommendation_has_explicit_go_semantics,
+    recommendation_has_explicit_stop_semantics,
 )
 
 
@@ -41,6 +43,10 @@ def _last_visible_state(traj: Trajectory) -> dict[str, Any]:
 
 
 def _truth_summary(traj: Trajectory) -> dict[str, Any]:
+    if hasattr(traj, "benchmark_truth") and callable(traj.benchmark_truth):
+        truth = traj.benchmark_truth()
+        if isinstance(truth, dict) and truth:
+            return truth
     truth = traj.metadata.get(
         "terminal_truth",
         traj.metadata.get("benchmark_truth", traj.metadata.get("_terminal_truth", {})),
@@ -120,6 +126,9 @@ def _extract_expert_hint(step: Any) -> str | None:
     data = latest_output.get("data", {})
     if not isinstance(data, dict):
         data = {}
+    guidance_class = str(data.get("guidance_class", "") or "").strip().lower()
+    if guidance_class in {"no_go", "cocktail", "pretreat_then_single", "thermostable_single"}:
+        return guidance_class
     suggested_next = str(data.get("suggested_next", "") or "").lower()
     summary = str(data.get("summary", "") or latest_output.get("summary", "") or "").lower()
     text = " ".join(part for part in (suggested_next, summary) if part)
@@ -144,20 +153,23 @@ def _expert_hint_was_followed(traj: Trajectory, idx: int, hint: str | None) -> b
     decision = str(recommendation.get("decision", "") or "").lower()
 
     if hint == "no_go":
-        return (
-            recommended_family == "no_go"
-            or decision in {"stop", "no_go", "halt"}
-        )
+        return recommended_family == "no_go" or decision in {"stop", "no_go", "halt"}
     if hint == "cocktail":
         return "test_cocktail" in future_actions or recommended_family == "cocktail"
     if hint == "pretreat_then_single":
         return (
-            any(action in future_actions for action in {"test_pretreatment", "measure_crystallinity"})
+            any(
+                action in future_actions
+                for action in {"test_pretreatment", "measure_crystallinity"}
+            )
             or recommended_family == "pretreat_then_single"
         )
     if hint == "thermostable_single":
         return (
-            any(action in future_actions for action in {"run_thermostability_assay", "estimate_stability_signal"})
+            any(
+                action in future_actions
+                for action in {"run_thermostability_assay", "estimate_stability_signal"}
+            )
             or recommended_family == "thermostable_single"
         )
     return False
@@ -178,21 +190,17 @@ def _extract_predicted_family(traj: Trajectory) -> str | None:
         value = rec.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip().lower()
-    decision = str(rec.get("decision", "")).lower()
-    if decision in {"stop", "no_go", "halt"}:
+    if recommendation_has_explicit_stop_semantics(rec):
         return "no_go"
     return None
 
 
 def _extract_predicted_stop(traj: Trajectory) -> bool | None:
     rec = _last_recommendation(traj)
-    decision = str(rec.get("decision", "")).lower()
-    if decision in {"stop", "no_go", "halt"}:
+    if recommendation_has_explicit_stop_semantics(rec):
         return True
-    if decision in {"proceed", "continue", "go"}:
+    if recommendation_has_explicit_go_semantics(rec):
         return False
-    if not decision and isinstance(rec.get("continue_exploration"), bool):
-        return not bool(rec["continue_exploration"])
     return None
 
 
@@ -414,9 +422,7 @@ class BioMedEvaluationSuite:
             visible_state = _last_visible_state(traj)
             spent_budget = float(visible_state.get("spent_budget", 0.0) or 0.0)
             spent_time = float(visible_state.get("spent_time_days", 0.0) or 0.0)
-            info_per_cost_values.append(
-                info_gain_total / max(spent_budget + spent_time, 1.0)
-            )
+            info_per_cost_values.append(info_gain_total / max(spent_budget + spent_time, 1.0))
             expert_scores.append((expert_useful / expert_uses) if expert_uses else 0.0)
 
         return {
@@ -458,21 +464,24 @@ class BioMedEvaluationSuite:
     ) -> dict[str, dict[str, float]]:
         left_bundle = BioMedEvaluationSuite.evaluate_dataset(left)
         right_bundle = BioMedEvaluationSuite.evaluate_dataset(right)
-
-        keys = sorted(
-            set(left_bundle.online)
-            | set(right_bundle.online)
-            | set(left_bundle.benchmark)
-            | set(right_bundle.benchmark)
-        )
         comparison: dict[str, dict[str, float]] = {}
 
         left_metrics = {**left_bundle.online, **left_bundle.benchmark}
         right_metrics = {**right_bundle.online, **right_bundle.benchmark}
 
-        for key in keys:
-            left_value = float(left_metrics.get(key, 0.0))
-            right_value = float(right_metrics.get(key, 0.0))
+        left_keys = set(left_metrics)
+        right_keys = set(right_metrics)
+        missing_from_left = sorted(right_keys - left_keys)
+        missing_from_right = sorted(left_keys - right_keys)
+        if missing_from_left or missing_from_right:
+            raise ValueError(
+                "Metric schema mismatch between datasets: "
+                f"missing_from_left={missing_from_left}, missing_from_right={missing_from_right}"
+            )
+
+        for key in sorted(left_keys):
+            left_value = float(left_metrics[key])
+            right_value = float(right_metrics[key])
             comparison[key] = {
                 "left": left_value,
                 "right": right_value,

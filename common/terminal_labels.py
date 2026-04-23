@@ -82,6 +82,9 @@ FAMILY_ALIASES: dict[str, set[str]] = {
     "no_go": {"no_go", "stop", "halt"},
 }
 
+STOP_DECISION_VALUES: tuple[str, ...] = ("stop", "no_go", "halt")
+GO_DECISION_VALUES: tuple[str, ...] = ("proceed", "continue", "go")
+
 EVIDENCE_MILESTONE_KEYS: tuple[str, ...] = (
     "feedstock_inspected",
     "crystallinity_measured",
@@ -116,6 +119,35 @@ def completed_canonical_milestones(discoveries: Mapping[str, Any] | Any) -> list
         done = {str(item) for item in discoveries}
         return [key for key in EVIDENCE_MILESTONE_KEYS if key in done]
     return []
+
+
+def normalize_decision(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    return normalized or None
+
+
+def is_explicit_stop_decision(value: Any) -> bool:
+    normalized = normalize_decision(value)
+    return bool(normalized and normalized in STOP_DECISION_VALUES)
+
+
+def is_explicit_go_decision(value: Any) -> bool:
+    normalized = normalize_decision(value)
+    return bool(normalized and normalized in GO_DECISION_VALUES)
+
+
+def recommendation_has_explicit_go_semantics(recommendation: Mapping[str, Any] | Any) -> bool:
+    if not isinstance(recommendation, Mapping):
+        return False
+    return is_explicit_go_decision(recommendation.get("decision"))
+
+
+def recommendation_has_explicit_stop_semantics(recommendation: Mapping[str, Any] | Any) -> bool:
+    if not isinstance(recommendation, Mapping):
+        return False
+    return is_explicit_stop_decision(recommendation.get("decision"))
 
 
 def infer_true_bottleneck(
@@ -153,9 +185,7 @@ def infer_true_family(best_intervention_family: str) -> str:
     return "no_go" if family == "no_go" else "thermostable_single"
 
 
-def terminal_recommendation_rationale(
-    primary_bottleneck: str, recommended_family: str
-) -> str:
+def terminal_recommendation_rationale(primary_bottleneck: str, recommended_family: str) -> str:
     bottleneck = str(primary_bottleneck or "").strip().lower()
     family = str(recommended_family or "").strip().lower()
 

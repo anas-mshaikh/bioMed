@@ -230,6 +230,23 @@ def _build_inspection_artifact(state: LatentEpisodeState, value: dict[str, Any])
     )
 
 
+def _build_measurement_artifact(
+    state: LatentEpisodeState,
+    *,
+    artifact_key: str,
+    title: str,
+    summary: str,
+    value: dict[str, Any],
+) -> ArtifactCard:
+    return ArtifactCard(
+        artifact_id=f"{state.episode_id}:artifact:{artifact_key}",
+        artifact_type="inspection_note",
+        title=title,
+        summary=summary,
+        data=_sanitize_public_payload(dict(value)),
+    )
+
+
 def _build_literature_artifacts(
     state: LatentEpisodeState,
     value: dict[str, Any],
@@ -359,6 +376,45 @@ def _build_artifacts_from_discoveries(state: LatentEpisodeState) -> list[Artifac
     ):
         artifacts.append(_build_inspection_artifact(state, discoveries["feedstock_inspection"]))
 
+    if "crystallinity_measurement" in discoveries and isinstance(
+        discoveries["crystallinity_measurement"], dict
+    ):
+        artifacts.append(
+            _build_measurement_artifact(
+                state,
+                artifact_key="crystallinity",
+                title="Crystallinity measurement",
+                summary="Measured the PET feedstock crystallinity band.",
+                value=discoveries["crystallinity_measurement"],
+            )
+        )
+
+    if "contamination_measurement" in discoveries and isinstance(
+        discoveries["contamination_measurement"], dict
+    ):
+        artifacts.append(
+            _build_measurement_artifact(
+                state,
+                artifact_key="contamination",
+                title="Contamination measurement",
+                summary="Measured the PET feedstock contamination band.",
+                value=discoveries["contamination_measurement"],
+            )
+        )
+
+    if "particle_size_estimate" in discoveries and isinstance(
+        discoveries["particle_size_estimate"], dict
+    ):
+        artifacts.append(
+            _build_measurement_artifact(
+                state,
+                artifact_key="particle_size",
+                title="Particle size estimate",
+                summary="Estimated PET particle-size band for the current sample.",
+                value=discoveries["particle_size_estimate"],
+            )
+        )
+
     if "literature_summary" in discoveries and isinstance(discoveries["literature_summary"], dict):
         artifacts.extend(_build_literature_artifacts(state, discoveries["literature_summary"]))
 
@@ -380,7 +436,9 @@ def _build_artifacts_from_discoveries(state: LatentEpisodeState) -> list[Artifac
             )
         )
 
-    if "thermostability_assay" in discoveries and isinstance(discoveries["thermostability_assay"], dict):
+    if "thermostability_assay" in discoveries and isinstance(
+        discoveries["thermostability_assay"], dict
+    ):
         artifacts.append(
             _build_assay_artifact(
                 state,
@@ -391,7 +449,9 @@ def _build_artifacts_from_discoveries(state: LatentEpisodeState) -> list[Artifac
             )
         )
 
-    if "pretreatment_result" in discoveries and isinstance(discoveries["pretreatment_result"], dict):
+    if "pretreatment_result" in discoveries and isinstance(
+        discoveries["pretreatment_result"], dict
+    ):
         artifacts.append(
             _build_assay_artifact(
                 state,
@@ -462,6 +522,7 @@ def _build_expert_inbox_from_discoveries(state: LatentEpisodeState) -> list[Expe
                 summary=summary,
                 confidence=confidence,
                 priority="medium",
+                data=dict(value),
             )
         )
 

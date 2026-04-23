@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from copy import deepcopy
+
 import pytest
 
 from training.evaluation import extract_truth_summary_from_latent
@@ -97,3 +99,66 @@ def test_missing_decision_field_gets_no_stop_go_credit(reward_computer, high_cry
         },
     )
     assert breakdown.components["stop_go_score"] == 0.0
+
+
+def test_explicit_go_semantics_required_for_positive_stop_go_credit(
+    reward_computer, high_crystallinity_latent
+) -> None:
+    weak = reward_computer.terminal_reward(
+        state=high_crystallinity_latent,
+        recommendation={
+            "primary_bottleneck": "substrate_accessibility",
+            "recommended_family": "pretreat_then_single",
+            "continue_exploration": False,
+            "confidence": 0.6,
+        },
+    )
+    explicit = reward_computer.terminal_reward(
+        state=high_crystallinity_latent,
+        recommendation={
+            "primary_bottleneck": "substrate_accessibility",
+            "recommended_family": "pretreat_then_single",
+            "decision": "proceed",
+            "confidence": 0.6,
+        },
+    )
+
+    assert weak.components["stop_go_score"] == 0.0
+    assert explicit.components["stop_go_score"] == 1.0
+
+
+def test_no_go_cost_realism_requires_economic_evidence(reward_computer, no_go_latent) -> None:
+    no_go_latent = deepcopy(no_go_latent)
+    shallow = reward_computer.terminal_reward(
+        state=no_go_latent,
+        recommendation={
+            "primary_bottleneck": "no_go",
+            "recommended_family": "no_go",
+            "decision": "stop",
+            "confidence": 0.7,
+        },
+    )
+
+    no_go_latent.discoveries["candidate_registry_queried"] = True
+    no_go_latent.discoveries["candidate_shortlist"] = [
+        {
+            "candidate_family": "thermostable_single",
+            "visible_score": 0.42,
+            "cost_band": "high",
+        }
+    ]
+    no_go_latent.discoveries["expert_reply:cost_reviewer"] = {
+        "expert_id": "cost_reviewer",
+        "guidance_class": "no_go",
+    }
+    supported = reward_computer.terminal_reward(
+        state=no_go_latent,
+        recommendation={
+            "primary_bottleneck": "no_go",
+            "recommended_family": "no_go",
+            "decision": "stop",
+            "confidence": 0.7,
+        },
+    )
+
+    assert supported.components["cost_realism_score"] > shallow.components["cost_realism_score"]

@@ -89,6 +89,50 @@ def _has_decision_quality_evidence(discoveries: Mapping[str, bool]) -> bool:
     )
 
 
+def _route_relevant_hydrolysis_context(
+    requested_family: str,
+    discoveries: Mapping[str, bool],
+) -> tuple[bool, bool]:
+    sample_context = _has_sample_context(discoveries)
+    candidate_context = _has_candidate_context(discoveries)
+
+    if requested_family == "pretreat_then_single":
+        route_ready = bool(
+            sample_context
+            and candidate_context
+            and (
+                discoveries.get("crystallinity_measured", False)
+                or discoveries.get("pretreatment_tested", False)
+            )
+        )
+        route_partial = bool(sample_context and candidate_context)
+        return route_ready, route_partial
+
+    if requested_family == "thermostable_single":
+        route_ready = bool(
+            candidate_context
+            and (
+                discoveries.get("stability_signal_estimated", False)
+                or discoveries.get("thermostability_assay_run", False)
+            )
+        )
+        route_partial = bool(candidate_context)
+        return route_ready, route_partial
+
+    if requested_family == "cocktail":
+        route_ready = bool(
+            candidate_context
+            and (
+                discoveries.get("cocktail_tested", False)
+                or discoveries.get("expert_consulted", False)
+            )
+        )
+        route_partial = bool(sample_context and candidate_context)
+        return route_ready, route_partial
+
+    return False, bool(sample_context and candidate_context)
+
+
 class StepRewardEngine:
     def __init__(self, config: RewardConfig, potential: ProgressPotential) -> None:
         self.config = config
@@ -123,9 +167,7 @@ class StepRewardEngine:
             rule_result.soft_violations
         )
         redundancy_penalty = self._redundancy_penalty(action, prev_state)
-        rb.penalty = (
-            soft_penalty + redundancy_penalty + self._special_penalties(action, prev_state)
-        )
+        rb.penalty = soft_penalty + redundancy_penalty + self._special_penalties(action, prev_state)
 
         phi_prev = self.potential.potential(prev_state)
         phi_next = self.potential.potential(next_state)
@@ -151,11 +193,13 @@ class StepRewardEngine:
             rb.add_note(violation.message)
         return rb
 
-    def _validity_score(self, output: object | None, action_kind: str, milestone_delta: int) -> float:
+    def _validity_score(
+        self, output: object | None, action_kind: str, milestone_delta: int
+    ) -> float:
         success = bool(getattr(output, "success", False))
         if not success:
             return 0.0
-        if milestone_delta > 0 or action_kind in {"state_hypothesis", "finalize_recommendation"}:
+        if milestone_delta > 0:
             return self.config.validity_success_reward
         return 0.0
 
@@ -210,13 +254,18 @@ class StepRewardEngine:
 
         if action_kind == "run_hydrolysis_assay":
             requested_family = str(action_params.get("candidate_family", "") or "")
-            last_assay = _safe_mapping(getattr(state, "discoveries", {}).get("last_hydrolysis_assay"))
+            last_assay = _safe_mapping(
+                getattr(state, "discoveries", {}).get("last_hydrolysis_assay")
+            )
             if requested_family and last_assay.get("candidate_family") == requested_family:
                 return self.config.redundancy_penalty
             if d.get("activity_assay_run", False):
                 return -0.04
-            if sample_context and candidate_context:
+            route_ready, route_partial = _route_relevant_hydrolysis_context(requested_family, d)
+            if route_ready:
                 return self.config.ordering_natural_reward
+            if route_partial:
+                return self.config.ordering_acceptable_reward
             return self.config.ordering_premature_penalty
 
         if action_kind == "estimate_stability_signal":
@@ -343,7 +392,10 @@ class StepRewardEngine:
         recent = [str(item.get("action_kind", "")) for item in history[-4:]]
         if recent and recent[-1] == action_kind:
             return self.config.redundancy_penalty
-        if action_kind in {"inspect_feedstock", "query_literature", "query_candidate_registry"} and action_kind in recent:
+        if (
+            action_kind in {"inspect_feedstock", "query_literature", "query_candidate_registry"}
+            and action_kind in recent
+        ):
             return self.config.redundancy_penalty * 1.5
         if action_kind == "run_hydrolysis_assay":
             requested_family = str(action_params.get("candidate_family", "") or "")
