@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from common.benchmark_contract import PRIVATE_TRUTH_METADATA_KEYS
 from models import BioMedAction
 from training.baselines import BasePolicy, build_policy
 from training.evaluation import BioMedEvaluationSuite
@@ -115,7 +116,8 @@ def test_rollout_collection_strips_hidden_truth_from_serialized_output_by_defaul
         capture_latent_truth=False,
     )
     assert "benchmark_truth" not in dataset.trajectories[0].metadata
-    assert dataset.trajectories[0].benchmark_truth()
+    assert dataset.trajectories[0].benchmark_truth() == {}
+    assert dataset.benchmark_truth_sidecar()
     payload = dataset.trajectories[0].to_dict()
     assert "terminal_truth" not in payload["metadata"]
     assert "benchmark_truth" not in payload["metadata"]
@@ -224,3 +226,5 @@ def test_public_replay_remains_truth_clean_after_serialization(tmp_path) -> None
     markdown = render_trajectory_markdown(reloaded.trajectories[0])
     assert "Hidden truth summary" not in markdown
     assert truth_path.exists()
+    for key in PRIVATE_TRUTH_METADATA_KEYS:
+        assert key not in reloaded.trajectories[0].metadata

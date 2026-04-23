@@ -3,10 +3,16 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from common.benchmark_contract import ACTION_COSTS
 from models import BioMedAction
-from common.terminal_labels import EVIDENCE_MILESTONE_KEYS, milestone_count
+from common.terminal_labels import (
+    ASSAY_ROUTE_FAMILIES,
+    EVIDENCE_MILESTONE_KEYS,
+    milestone_count,
+    normalize_structured_expert_guidance_class,
+)
 from server.rules import RuleCheckResult
-from server.simulator.transition import ACTION_COSTS, TransitionResult
+from server.simulator.transition import TransitionResult
 
 from .reward_config import RewardConfig
 from .reward_types import RewardBreakdown
@@ -33,6 +39,13 @@ def _discoveries(state: object) -> dict[str, bool]:
     raw = getattr(state, "discoveries", {})
     if isinstance(raw, Mapping):
         return {str(k): bool(v) for k, v in raw.items()}
+    return {}
+
+
+def _raw_discoveries(state: object) -> dict[str, Any]:
+    raw = getattr(state, "discoveries", {})
+    if isinstance(raw, Mapping):
+        return dict(raw)
     return {}
 
 
@@ -87,6 +100,29 @@ def _has_decision_quality_evidence(discoveries: Mapping[str, bool]) -> bool:
         or discoveries.get("pretreatment_tested", False)
         or discoveries.get("cocktail_tested", False)
     )
+
+
+def _structured_expert_guidance_class(raw_discoveries: Mapping[str, Any]) -> str | None:
+    for key, value in raw_discoveries.items():
+        if not str(key).startswith("expert_reply:") or not isinstance(value, Mapping):
+            continue
+        guidance = normalize_structured_expert_guidance_class(value.get("guidance_class"))
+        if guidance is not None:
+            return guidance
+    return None
+
+
+def _candidate_shortlist_top_family(raw_discoveries: Mapping[str, Any]) -> str | None:
+    shortlist = raw_discoveries.get("candidate_shortlist", [])
+    if not isinstance(shortlist, Sequence) or isinstance(shortlist, (str, bytes, bytearray)):
+        return None
+    for item in shortlist:
+        if not isinstance(item, Mapping):
+            continue
+        family = item.get("candidate_family")
+        if isinstance(family, str) and family in ASSAY_ROUTE_FAMILIES:
+            return family
+    return None
 
 
 def _route_relevant_hydrolysis_context(
@@ -206,10 +242,13 @@ class StepRewardEngine:
     def _ordering_score(self, action_or_kind: BioMedAction | str, state: object) -> float:
         action_kind, action_params = _action_kind_and_params(action_or_kind)
         d = _discoveries(state)
+        raw = _raw_discoveries(state)
         evidence_count = milestone_count(d)
         sample_context = _has_sample_context(d)
         candidate_context = _has_candidate_context(d)
         decision_quality_evidence = _has_decision_quality_evidence(d)
+        structured_guidance = _structured_expert_guidance_class(raw)
+        shortlist_top_family = _candidate_shortlist_top_family(raw)
 
         if action_kind == "inspect_feedstock":
             if d.get("feedstock_inspected", False):
@@ -278,22 +317,42 @@ class StepRewardEngine:
         if action_kind == "run_thermostability_assay":
             if d.get("thermostability_assay_run", False):
                 return self.config.redundancy_penalty
-            if d.get("candidate_registry_queried", False):
+            route_ready = bool(
+                d.get("candidate_registry_queried", False)
+                and (
+                    d.get("stability_signal_estimated", False)
+                    or structured_guidance == "thermostable_single"
+                    or shortlist_top_family == "thermostable_single"
+                )
+            )
+            route_partial = bool(d.get("candidate_registry_queried", False) and sample_context)
+            if route_ready:
                 return self.config.ordering_natural_reward
+            if route_partial:
+                return self.config.ordering_acceptable_reward
             return self.config.ordering_premature_penalty
 
         if action_kind == "test_pretreatment":
             if d.get("pretreatment_tested", False):
                 return self.config.redundancy_penalty
-            if d.get("crystallinity_measured", False) or d.get("activity_assay_run", False):
+            if d.get("feedstock_inspected", False) and d.get("crystallinity_measured", False):
                 return self.config.ordering_natural_reward
+            if d.get("feedstock_inspected", False):
+                return self.config.ordering_acceptable_reward
             return self.config.ordering_premature_penalty
 
         if action_kind == "test_cocktail":
             if d.get("cocktail_tested", False):
                 return self.config.redundancy_penalty
-            if d.get("candidate_registry_queried", False) and d.get("activity_assay_run", False):
+            route_ready = bool(
+                d.get("candidate_registry_queried", False)
+                and (structured_guidance == "cocktail" or shortlist_top_family == "cocktail")
+            )
+            route_partial = bool(d.get("candidate_registry_queried", False) and sample_context)
+            if route_ready:
                 return self.config.ordering_natural_reward
+            if route_partial:
+                return self.config.ordering_acceptable_reward
             return self.config.ordering_premature_penalty
 
         if action_kind == "ask_expert":

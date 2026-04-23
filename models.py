@@ -6,36 +6,19 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 from openenv.core.env_server import Action, Observation, State
 
-
-ACTION_KIND_VALUES = (
-    "inspect_feedstock",
-    "measure_crystallinity",
-    "measure_contamination",
-    "estimate_particle_size",
-    "query_literature",
-    "query_candidate_registry",
-    "estimate_stability_signal",
-    "run_hydrolysis_assay",
-    "run_thermostability_assay",
-    "test_pretreatment",
-    "test_cocktail",
-    "ask_expert",
-    "state_hypothesis",
-    "finalize_recommendation",
+from common.benchmark_contract import (
+    ACTION_KIND_VALUES,
+    ARTIFACT_TYPE_VALUES,
+    EXPERT_ID_VALUES,
+    OUTPUT_TYPE_VALUES,
+    PRIORITY_VALUES,
+    STAGE_VALUES,
 )
+
 ActionKind = str
 
-STAGE_VALUES = ("intake", "triage", "assay", "decision", "done")
 Stage = Literal["intake", "triage", "assay", "decision", "done"]
 
-ARTIFACT_TYPE_VALUES = (
-    "inspection_note",
-    "literature_note",
-    "candidate_card",
-    "assay_report",
-    "expert_note",
-    "decision_note",
-)
 ArtifactType = Literal[
     "inspection_note",
     "literature_note",
@@ -45,16 +28,6 @@ ArtifactType = Literal[
     "decision_note",
 ]
 
-OUTPUT_TYPE_VALUES = (
-    "blocked",
-    "failure",
-    "inspection",
-    "literature",
-    "candidate_registry",
-    "assay",
-    "expert_reply",
-    "decision",
-)
 OutputType = Literal[
     "blocked",
     "failure",
@@ -66,12 +39,6 @@ OutputType = Literal[
     "decision",
 ]
 
-EXPERT_ID_VALUES = (
-    "wet_lab_lead",
-    "computational_biologist",
-    "process_engineer",
-    "cost_reviewer",
-)
 ExpertId = Literal[
     "wet_lab_lead",
     "computational_biologist",
@@ -79,7 +46,6 @@ ExpertId = Literal[
     "cost_reviewer",
 ]
 
-PRIORITY_VALUES = ("low", "medium", "high")
 Priority = Literal["low", "medium", "high"]
 
 

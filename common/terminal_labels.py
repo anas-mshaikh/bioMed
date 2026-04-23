@@ -1,105 +1,18 @@
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-CANONICAL_BOTTLENECKS: tuple[str, ...] = (
-    "substrate_accessibility",
-    "thermostability",
-    "contamination_artifact",
-    "cocktail_synergy",
-    "candidate_mismatch",
-    "no_go",
-)
-
-CANONICAL_FAMILIES: tuple[str, ...] = (
-    "pretreat_then_single",
-    "thermostable_single",
-    "cocktail",
-    "no_go",
-)
-
-ASSAY_ROUTE_FAMILIES: tuple[str, ...] = (
-    "pretreat_then_single",
-    "thermostable_single",
-    "cocktail",
-)
-
-BOTTLENECK_RATIONALE_PHRASES: dict[str, str] = {
-    "substrate_accessibility": "substrate accessibility driven by crystallinity or pretreatment sensitivity",
-    "thermostability": "thermostability under realistic operating conditions",
-    "contamination_artifact": "contamination or assay artifacts",
-    "cocktail_synergy": "hidden synergy that favors a cocktail strategy",
-    "candidate_mismatch": "candidate mismatch or weak candidate fit",
-    "no_go": "a no-go decision",
-}
-
-FAMILY_RATIONALE_PHRASES: dict[str, str] = {
-    "pretreat_then_single": "pretreatment-first single-enzyme route",
-    "thermostable_single": "thermostable single-enzyme route",
-    "cocktail": "cocktail route",
-    "no_go": "no-go",
-}
-
-BOTTLENECK_ALIASES: dict[str, set[str]] = {
-    "substrate_accessibility": {
-        "substrate_accessibility",
-        "high_crystallinity",
-        "crystallinity",
-        "pretreatment_needed",
-    },
-    "thermostability": {
-        "thermostability",
-        "stability",
-        "thermal_instability",
-    },
-    "contamination_artifact": {
-        "contamination",
-        "contamination_artifact",
-        "artifact",
-    },
-    "cocktail_synergy": {
-        "cocktail_synergy",
-        "synergy",
-        "single_candidate_limit",
-    },
-    "candidate_mismatch": {
-        "candidate_mismatch",
-        "enzyme_mismatch",
-        "fit_problem",
-    },
-    "no_go": {
-        "no_go",
-        "stop",
-        "economics",
-        "poor_viability",
-    },
-}
-
-
-FAMILY_ALIASES: dict[str, set[str]] = {
-    "pretreat_then_single": {"pretreat_then_single", "pretreat", "pretreatment_first"},
-    "thermostable_single": {"thermostable_single", "thermostable", "single"},
-    "cocktail": {"cocktail", "cocktail_route", "mixture"},
-    "no_go": {"no_go", "stop", "halt"},
-}
-
-STOP_DECISION_VALUES: tuple[str, ...] = ("stop", "no_go", "halt")
-GO_DECISION_VALUES: tuple[str, ...] = ("proceed", "continue", "go")
-
-EVIDENCE_MILESTONE_KEYS: tuple[str, ...] = (
-    "feedstock_inspected",
-    "crystallinity_measured",
-    "contamination_measured",
-    "particle_size_estimated",
-    "literature_reviewed",
-    "candidate_registry_queried",
-    "stability_signal_estimated",
-    "activity_assay_run",
-    "thermostability_assay_run",
-    "pretreatment_tested",
-    "cocktail_tested",
-    "expert_consulted",
-    "hypothesis_stated",
-    "final_decision_submitted",
+from .benchmark_contract import (
+    ASSAY_ROUTE_FAMILIES,
+    BOTTLENECK_ALIASES,
+    BOTTLENECK_RATIONALE_PHRASES,
+    CANONICAL_BOTTLENECKS,
+    CANONICAL_FAMILIES,
+    EVIDENCE_MILESTONE_KEYS,
+    FAMILY_ALIASES,
+    FAMILY_RATIONALE_PHRASES,
+    GO_DECISION_VALUES,
+    STOP_DECISION_VALUES,
+    STRUCTURED_EXPERT_GUIDANCE_CLASSES,
 )
 
 
@@ -119,6 +32,51 @@ def completed_canonical_milestones(discoveries: Mapping[str, Any] | Any) -> list
         done = {str(item) for item in discoveries}
         return [key for key in EVIDENCE_MILESTONE_KEYS if key in done]
     return []
+
+
+def normalize_canonical_family(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    return normalized if normalized in CANONICAL_FAMILIES else None
+
+
+def normalize_structured_expert_guidance_class(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    return normalized if normalized in STRUCTURED_EXPERT_GUIDANCE_CLASSES else None
+
+
+def structured_expert_guidance_class(payload: Mapping[str, Any] | Any) -> str | None:
+    if not isinstance(payload, Mapping):
+        return None
+    return normalize_structured_expert_guidance_class(payload.get("guidance_class"))
+
+
+def structured_expert_guidance_from_observation(observation: Mapping[str, Any] | Any) -> str | None:
+    if not isinstance(observation, Mapping):
+        return None
+
+    latest_output = observation.get("latest_output", {})
+    if isinstance(latest_output, Mapping) and latest_output.get("output_type") == "expert_reply":
+        guidance = structured_expert_guidance_class(latest_output.get("data", {}))
+        if guidance is not None:
+            return guidance
+
+    expert_inbox = observation.get("expert_inbox", [])
+    if isinstance(expert_inbox, Sequence) and not isinstance(expert_inbox, (str, bytes, bytearray)):
+        for item in expert_inbox:
+            if hasattr(item, "model_dump"):
+                dumped = item.model_dump()
+                guidance = structured_expert_guidance_class(dumped.get("data", {}))
+            elif isinstance(item, Mapping):
+                guidance = structured_expert_guidance_class(item.get("data", {}))
+            else:
+                guidance = None
+            if guidance is not None:
+                return guidance
+    return None
 
 
 def normalize_decision(value: Any) -> str | None:
@@ -141,13 +99,29 @@ def is_explicit_go_decision(value: Any) -> bool:
 def recommendation_has_explicit_go_semantics(recommendation: Mapping[str, Any] | Any) -> bool:
     if not isinstance(recommendation, Mapping):
         return False
-    return is_explicit_go_decision(recommendation.get("decision"))
+    family = normalize_canonical_family(
+        recommendation.get("recommended_family", recommendation.get("intervention_family"))
+    )
+    return bool(
+        family
+        and family != "no_go"
+        and is_explicit_go_decision(recommendation.get("decision"))
+    )
 
 
 def recommendation_has_explicit_stop_semantics(recommendation: Mapping[str, Any] | Any) -> bool:
     if not isinstance(recommendation, Mapping):
         return False
-    return is_explicit_stop_decision(recommendation.get("decision"))
+    family = normalize_canonical_family(
+        recommendation.get("recommended_family", recommendation.get("intervention_family"))
+    )
+    return bool(
+        family == "no_go" and is_explicit_stop_decision(recommendation.get("decision"))
+    )
+
+
+def recommendation_has_explicit_no_go_semantics(recommendation: Mapping[str, Any] | Any) -> bool:
+    return recommendation_has_explicit_stop_semantics(recommendation)
 
 
 def infer_true_bottleneck(
@@ -179,10 +153,13 @@ def infer_true_bottleneck(
 
 
 def infer_true_family(best_intervention_family: str) -> str:
-    family = str(best_intervention_family or "").strip().lower()
-    if family in CANONICAL_FAMILIES:
-        return family
-    return "no_go" if family == "no_go" else "thermostable_single"
+    family = normalize_canonical_family(best_intervention_family)
+    if family is None:
+        raise ValueError(
+            "best_intervention_family must be one of "
+            f"{CANONICAL_FAMILIES}, got {best_intervention_family!r}"
+        )
+    return family
 
 
 def terminal_recommendation_rationale(primary_bottleneck: str, recommended_family: str) -> str:

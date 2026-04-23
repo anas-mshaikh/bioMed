@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from models import ACTION_KIND_VALUES
+from common.benchmark_contract import ACTION_COSTS, ACTION_KIND_VALUES
 from server.rules import RuleEngine
-from server.simulator.transition import ACTION_COSTS, BioMedTransitionEngine
+from server.simulator.transition import BioMedTransitionEngine
 from training.baselines import _build_action
 
 
@@ -28,4 +28,3 @@ def test_all_actions_are_renderable_by_baselines(sample_trajectory) -> None:
     for action_kind in ACTION_KIND_VALUES:
         action = _build_action(action_kind, observation, sample_trajectory)
         assert action.action_kind == action_kind
-

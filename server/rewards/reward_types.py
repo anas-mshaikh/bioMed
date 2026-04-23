@@ -3,6 +3,20 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from common.benchmark_contract import REWARD_COMPONENT_KEYS
+
+
+def _reward_component_value(source: Any, key: str) -> float:
+    return float(getattr(source, key, 0.0) or 0.0)
+
+
+def _reward_component_sum(source: Any) -> float:
+    return sum(_reward_component_value(source, key) for key in REWARD_COMPONENT_KEYS)
+
+
+def _reward_component_kwargs(source: Any) -> dict[str, float]:
+    return {key: _reward_component_value(source, key) for key in REWARD_COMPONENT_KEYS}
+
 
 @dataclass
 class RewardComponentSnapshot:
@@ -17,17 +31,7 @@ class RewardComponentSnapshot:
     terminal: float = 0.0
 
     def total(self) -> float:
-        return (
-            self.validity
-            + self.ordering
-            + self.info_gain
-            + self.efficiency
-            + self.novelty
-            + self.expert_management
-            + self.penalty
-            + self.shaping
-            + self.terminal
-        )
+        return _reward_component_sum(self)
 
 
 @dataclass
@@ -46,48 +50,21 @@ class RewardBreakdown:
 
     @property
     def total(self) -> float:
-        return (
-            self.validity
-            + self.ordering
-            + self.info_gain
-            + self.efficiency
-            + self.novelty
-            + self.expert_management
-            + self.penalty
-            + self.shaping
-            + self.terminal
-        )
+        return _reward_component_sum(self)
 
     def add_note(self, message: str) -> None:
         if message:
             self.notes.append(message)
 
     def merge(self, other: "RewardBreakdown") -> "RewardBreakdown":
-        self.validity += other.validity
-        self.ordering += other.ordering
-        self.info_gain += other.info_gain
-        self.efficiency += other.efficiency
-        self.novelty += other.novelty
-        self.expert_management += other.expert_management
-        self.penalty += other.penalty
-        self.shaping += other.shaping
-        self.terminal += other.terminal
+        for key in REWARD_COMPONENT_KEYS:
+            setattr(self, key, _reward_component_value(self, key) + _reward_component_value(other, key))
         self.components.update(other.components)
         self.notes.extend(other.notes)
         return self
 
     def snapshot(self) -> RewardComponentSnapshot:
-        return RewardComponentSnapshot(
-            validity=self.validity,
-            ordering=self.ordering,
-            info_gain=self.info_gain,
-            efficiency=self.efficiency,
-            novelty=self.novelty,
-            expert_management=self.expert_management,
-            penalty=self.penalty,
-            shaping=self.shaping,
-            terminal=self.terminal,
-        )
+        return RewardComponentSnapshot(**_reward_component_kwargs(self))
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self.snapshot())

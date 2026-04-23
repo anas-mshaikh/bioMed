@@ -8,6 +8,8 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Iterable, Mapping, Sequence
 
+from common.benchmark_contract import PRIVATE_TRUTH_METADATA_KEYS
+
 
 def _is_sequence(value: Any) -> bool:
     return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
@@ -156,9 +158,13 @@ class Trajectory:
         return str(self.steps[-1].action.get("action_kind")) if self.steps[-1].action else None
 
     def benchmark_truth(self) -> dict[str, Any]:
-        truth = self._benchmark_truth or self.metadata.get(
-            "benchmark_truth", self.metadata.get("terminal_truth", {})
-        )
+        truth = self._benchmark_truth
+        if not truth:
+            for key in PRIVATE_TRUTH_METADATA_KEYS:
+                value = self.metadata.get(key, {})
+                if isinstance(value, Mapping) and value:
+                    truth = value
+                    break
         return dict(truth) if isinstance(truth, Mapping) else {}
 
     def to_dict(self, *, include_benchmark_truth: bool = False) -> dict[str, Any]:
@@ -166,7 +172,7 @@ class Trajectory:
             str(key): value
             for key, value in self.metadata.items()
             if not str(key).startswith("_")
-            and (include_benchmark_truth or str(key) not in {"benchmark_truth", "terminal_truth"})
+            and (include_benchmark_truth or str(key) not in PRIVATE_TRUTH_METADATA_KEYS)
         }
         return {
             "episode_id": self.episode_id,
@@ -210,6 +216,7 @@ class Trajectory:
 @dataclass
 class TrajectoryDataset:
     trajectories: list[Trajectory] = field(default_factory=list)
+    _benchmark_truth_sidecar: dict[str, dict[str, Any]] = field(default_factory=dict, repr=False)
 
     def __len__(self) -> int:
         return len(self.trajectories)
@@ -224,15 +231,38 @@ class TrajectoryDataset:
         self.trajectories.extend(items)
 
     def filter_successful(self) -> "TrajectoryDataset":
-        return TrajectoryDataset(trajectories=[t for t in self.trajectories if t.success is True])
+        selected = [t for t in self.trajectories if t.success is True]
+        dataset = TrajectoryDataset(trajectories=selected)
+        dataset._benchmark_truth_sidecar = {
+            t.episode_id: dict(self._benchmark_truth_sidecar[t.episode_id])
+            for t in selected
+            if t.episode_id in self._benchmark_truth_sidecar
+        }
+        return dataset
 
     def group_by_scenario_family(self) -> dict[str, "TrajectoryDataset"]:
         grouped: dict[str, list[Trajectory]] = {}
         for trajectory in self.trajectories:
             grouped.setdefault(trajectory.scenario_family, []).append(trajectory)
-        return {k: TrajectoryDataset(v) for k, v in grouped.items()}
+        return {
+            k: TrajectoryDataset(
+                v,
+                _benchmark_truth_sidecar={
+                    t.episode_id: dict(self._benchmark_truth_sidecar[t.episode_id])
+                    for t in v
+                    if t.episode_id in self._benchmark_truth_sidecar
+                },
+            )
+            for k, v in grouped.items()
+        }
 
     def benchmark_truth_sidecar(self) -> dict[str, dict[str, Any]]:
+        if self._benchmark_truth_sidecar:
+            return {
+                episode_id: dict(truth)
+                for episode_id, truth in self._benchmark_truth_sidecar.items()
+            }
+
         sidecar: dict[str, dict[str, Any]] = {}
         for trajectory in self.trajectories:
             truth = trajectory.benchmark_truth()
@@ -241,10 +271,14 @@ class TrajectoryDataset:
         return sidecar
 
     def apply_truth_sidecar(self, payload: Mapping[str, Any]) -> None:
+        sidecar: dict[str, dict[str, Any]] = {}
         for trajectory in self.trajectories:
             truth = payload.get(trajectory.episode_id)
             if isinstance(truth, Mapping):
-                trajectory._benchmark_truth = dict(truth)
+                truth_dict = dict(truth)
+                trajectory._benchmark_truth = truth_dict
+                sidecar[trajectory.episode_id] = truth_dict
+        self._benchmark_truth_sidecar = sidecar
 
     def save_jsonl(
         self,

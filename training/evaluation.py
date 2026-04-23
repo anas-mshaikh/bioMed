@@ -7,17 +7,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
-from models import ACTION_KIND_VALUES
-from .trajectory import Trajectory, TrajectoryDataset
+from common.benchmark_contract import ACTION_KIND_VALUES, BENCHMARK_METRIC_KEYS, ONLINE_METRIC_KEYS, PRIVATE_TRUTH_METADATA_KEYS
 from common.terminal_labels import (
     BOTTLENECK_ALIASES,
     FAMILY_ALIASES,
     infer_true_bottleneck,
     infer_true_family,
+    recommendation_has_explicit_no_go_semantics,
     recommendation_has_explicit_go_semantics,
     recommendation_has_explicit_stop_semantics,
+    structured_expert_guidance_from_observation,
 )
+from .trajectory import Trajectory, TrajectoryDataset
 
 
 def _mean(values: list[float]) -> float:
@@ -36,22 +37,42 @@ def _clip(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
 
 
+def _zero_metric_map(keys: tuple[str, ...]) -> dict[str, float]:
+    return {key: 0.0 for key in keys}
+
+
+def _validate_metric_schema(metrics: dict[str, float], keys: tuple[str, ...], *, label: str) -> None:
+    expected = set(keys)
+    actual = set(metrics)
+    missing = sorted(expected - actual)
+    extra = sorted(actual - expected)
+    if missing or extra:
+        raise ValueError(
+            f"Metric schema mismatch in {label}: missing={missing}, extra={extra}"
+        )
+
+
 def _last_visible_state(traj: Trajectory) -> dict[str, Any]:
     if traj.final_step and isinstance(traj.final_step.visible_state, dict):
         return traj.final_step.visible_state
     return {}
 
 
-def _truth_summary(traj: Trajectory) -> dict[str, Any]:
+def _truth_summary(
+    traj: Trajectory,
+    truth_summary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if isinstance(truth_summary, dict) and truth_summary:
+        return truth_summary
     if hasattr(traj, "benchmark_truth") and callable(traj.benchmark_truth):
         truth = traj.benchmark_truth()
         if isinstance(truth, dict) and truth:
             return truth
-    truth = traj.metadata.get(
-        "terminal_truth",
-        traj.metadata.get("benchmark_truth", traj.metadata.get("_terminal_truth", {})),
-    )
-    return truth if isinstance(truth, dict) else {}
+    for key in PRIVATE_TRUTH_METADATA_KEYS:
+        truth = traj.metadata.get(key, {})
+        if isinstance(truth, dict) and truth:
+            return truth
+    return {}
 
 
 def _last_recommendation(traj: Trajectory) -> dict[str, Any]:
@@ -118,29 +139,7 @@ def _obs_dict(value: Any) -> dict[str, Any]:
 
 def _extract_expert_hint(step: Any) -> str | None:
     observation = _obs_dict(getattr(step, "observation", {}))
-    latest_output = observation.get("latest_output", {})
-    if not isinstance(latest_output, dict):
-        return None
-    if latest_output.get("output_type") != "expert_reply":
-        return None
-    data = latest_output.get("data", {})
-    if not isinstance(data, dict):
-        data = {}
-    guidance_class = str(data.get("guidance_class", "") or "").strip().lower()
-    if guidance_class in {"no_go", "cocktail", "pretreat_then_single", "thermostable_single"}:
-        return guidance_class
-    suggested_next = str(data.get("suggested_next", "") or "").lower()
-    summary = str(data.get("summary", "") or latest_output.get("summary", "") or "").lower()
-    text = " ".join(part for part in (suggested_next, summary) if part)
-    if any(token in text for token in ("stop/go", "no-go", "no_go", "continued spend", "stop")):
-        return "no_go"
-    if any(token in text for token in ("cocktail", "synergy", "mixture")):
-        return "cocktail"
-    if any(token in text for token in ("pretreat", "accessibility", "cleanup")):
-        return "pretreat_then_single"
-    if any(token in text for token in ("stability", "thermo", "operating conditions")):
-        return "thermostable_single"
-    return None
+    return structured_expert_guidance_from_observation(observation)
 
 
 def _expert_hint_was_followed(traj: Trajectory, idx: int, hint: str | None) -> bool:
@@ -190,8 +189,6 @@ def _extract_predicted_family(traj: Trajectory) -> str | None:
         value = rec.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip().lower()
-    if recommendation_has_explicit_stop_semantics(rec):
-        return "no_go"
     return None
 
 
@@ -202,18 +199,6 @@ def _extract_predicted_stop(traj: Trajectory) -> bool | None:
     if recommendation_has_explicit_go_semantics(rec):
         return False
     return None
-
-
-def _extract_truth_bottleneck(traj: Trajectory) -> str | None:
-    truth = _truth_summary(traj)
-    value = truth.get("true_bottleneck")
-    return str(value).lower() if value else None
-
-
-def _extract_truth_family(traj: Trajectory) -> str | None:
-    truth = _truth_summary(traj)
-    value = truth.get("best_intervention_family")
-    return str(value).lower() if value else None
 
 
 def _alias_match(predicted: str | None, truth: str | None, alias_map: dict[str, set[str]]) -> float:
@@ -269,26 +254,31 @@ def extract_truth_summary_from_latent(latent: Any) -> dict[str, Any]:
     }
 
 
-def classify_success(traj: Trajectory) -> bool:
+def classify_success(traj: Trajectory, truth_summary: dict[str, Any] | None = None) -> bool:
     has_final_recommendation = _has_final_recommendation(traj)
     bottleneck_match = _alias_match(
         _extract_predicted_bottleneck(traj),
-        _extract_truth_bottleneck(traj),
+        (truth_summary or _truth_summary(traj)).get("true_bottleneck"),
         BOTTLENECK_ALIASES,
     )
     family_match = _alias_match(
         _extract_predicted_family(traj),
-        _extract_truth_family(traj),
+        (truth_summary or _truth_summary(traj)).get("best_intervention_family"),
         FAMILY_ALIASES,
     )
-    truth_family = _extract_truth_family(traj)
+    truth_family = (truth_summary or _truth_summary(traj)).get("best_intervention_family")
     stop_match = 0.0
     if truth_family and has_final_recommendation:
         if truth_family == "no_go":
-            stop_match = 1.0 if _extract_predicted_stop(traj) else 0.0
+            stop_match = 1.0 if recommendation_has_explicit_no_go_semantics(_last_recommendation(traj)) else 0.0
         else:
             predicted_stop = _extract_predicted_stop(traj)
-            stop_match = 1.0 if predicted_stop is False else 0.0
+            stop_match = (
+                1.0
+                if predicted_stop is False
+                and _extract_predicted_family(traj) not in {None, "no_go"}
+                else 0.0
+            )
 
     composite = 0.4 * bottleneck_match + 0.4 * family_match + 0.2 * stop_match
     return composite >= 0.75
@@ -311,6 +301,7 @@ class MetricBundle:
 class BioMedEvaluationSuite:
     @staticmethod
     def online_metrics(trajectories: list[Trajectory]) -> dict[str, float]:
+        metric_keys = tuple(ONLINE_METRIC_KEYS)
         returns = [t.total_reward for t in trajectories]
         lengths = [float(t.num_steps) for t in trajectories]
         successes = [
@@ -318,37 +309,34 @@ class BioMedEvaluationSuite:
             for t in trajectories
         ]
 
-        return {
+        if not trajectories:
+            return _zero_metric_map(metric_keys)
+
+        metrics = {
             "mean_return": _mean(returns),
             "median_return": _median(returns),
             "std_return": _std(returns),
             "mean_episode_length": _mean(lengths),
             "success_rate": _mean(successes),
         }
+        _validate_metric_schema(metrics, metric_keys, label="online")
+        return metrics
 
     @staticmethod
     def benchmark_metrics(dataset: TrajectoryDataset) -> dict[str, float]:
+        metric_keys = tuple(BENCHMARK_METRIC_KEYS)
         trajectories = dataset.trajectories
         if not trajectories:
-            return {
-                "workflow_validity_rate": 0.0,
-                "ordering_score": 0.0,
-                "action_diversity": 0.0,
-                "mean_conclusion_confidence": 0.0,
-                "bottleneck_accuracy": 0.0,
-                "intervention_family_accuracy": 0.0,
-                "stop_go_accuracy": 0.0,
-                "info_per_cost": 0.0,
-                "expert_usefulness_score": 0.0,
-                "hard_violation_rate": 0.0,
-                "soft_violation_rate": 0.0,
-            }
+            return _zero_metric_map(metric_keys)
 
         if all(not step.reward_breakdown for traj in trajectories for step in traj.steps):
             raise ValueError(
                 "All trajectory reward_breakdown values are empty; benchmark metrics are not trustworthy."
             )
-        if all(not _truth_summary(traj) for traj in trajectories):
+        if all(
+            not (dataset._benchmark_truth_sidecar.get(traj.episode_id) or _truth_summary(traj))
+            for traj in trajectories
+        ):
             raise ValueError(
                 "All trajectory truth summaries are missing; benchmark metrics are not trustworthy."
             )
@@ -367,6 +355,9 @@ class BioMedEvaluationSuite:
         total_steps = 0
 
         for traj in trajectories:
+            truth = _truth_summary(traj, dataset._benchmark_truth_sidecar.get(traj.episode_id))
+            if not truth:
+                truth = _truth_summary(traj)
             hard_episode_count = 0
             info_gain_total = 0.0
             expert_uses = 0
@@ -397,25 +388,33 @@ class BioMedEvaluationSuite:
             bottleneck_scores.append(
                 _alias_match(
                     _extract_predicted_bottleneck(traj),
-                    _extract_truth_bottleneck(traj),
+                    truth.get("true_bottleneck"),
                     BOTTLENECK_ALIASES,
                 )
             )
             family_scores.append(
                 _alias_match(
                     _extract_predicted_family(traj),
-                    _extract_truth_family(traj),
+                    truth.get("best_intervention_family"),
                     FAMILY_ALIASES,
                 )
             )
 
-            truth_family = _extract_truth_family(traj)
+            truth_family = truth.get("best_intervention_family")
             if truth_family and _has_final_recommendation(traj):
                 if truth_family == "no_go":
-                    stop_scores.append(1.0 if _extract_predicted_stop(traj) else 0.0)
+                    stop_scores.append(
+                        1.0
+                        if recommendation_has_explicit_no_go_semantics(_last_recommendation(traj))
+                        else 0.0
+                    )
                 else:
                     predicted_stop = _extract_predicted_stop(traj)
-                    stop_scores.append(1.0 if predicted_stop is False else 0.0)
+                    stop_scores.append(
+                        1.0
+                        if predicted_stop is False and _extract_predicted_family(traj) not in {None, "no_go"}
+                        else 0.0
+                    )
             elif truth_family:
                 stop_scores.append(0.0)
 
@@ -425,7 +424,7 @@ class BioMedEvaluationSuite:
             info_per_cost_values.append(info_gain_total / max(spent_budget + spent_time, 1.0))
             expert_scores.append((expert_useful / expert_uses) if expert_uses else 0.0)
 
-        return {
+        metrics = {
             "workflow_validity_rate": _mean(no_hard_violation_episodes),
             "ordering_score": _mean(ordering_scores),
             "action_diversity": _mean(action_diversity_scores),
@@ -438,6 +437,8 @@ class BioMedEvaluationSuite:
             "hard_violation_rate": (hard_violation_steps / total_steps) if total_steps else 0.0,
             "soft_violation_rate": (soft_violation_steps / total_steps) if total_steps else 0.0,
         }
+        _validate_metric_schema(metrics, metric_keys, label="benchmark")
+        return metrics
 
     @staticmethod
     def scenario_breakdown(dataset: TrajectoryDataset) -> dict[str, dict[str, float]]:
@@ -468,18 +469,11 @@ class BioMedEvaluationSuite:
 
         left_metrics = {**left_bundle.online, **left_bundle.benchmark}
         right_metrics = {**right_bundle.online, **right_bundle.benchmark}
+        expected_keys = tuple(ONLINE_METRIC_KEYS) + tuple(BENCHMARK_METRIC_KEYS)
+        _validate_metric_schema(left_metrics, expected_keys, label="left compare")
+        _validate_metric_schema(right_metrics, expected_keys, label="right compare")
 
-        left_keys = set(left_metrics)
-        right_keys = set(right_metrics)
-        missing_from_left = sorted(right_keys - left_keys)
-        missing_from_right = sorted(left_keys - right_keys)
-        if missing_from_left or missing_from_right:
-            raise ValueError(
-                "Metric schema mismatch between datasets: "
-                f"missing_from_left={missing_from_left}, missing_from_right={missing_from_right}"
-            )
-
-        for key in sorted(left_keys):
+        for key in expected_keys:
             left_value = float(left_metrics[key])
             right_value = float(right_metrics[key])
             comparison[key] = {

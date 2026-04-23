@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from common.benchmark_contract import ACTION_KIND_VALUES, FORBIDDEN_PUBLIC_DATA_KEYS
 from common.terminal_labels import completed_canonical_milestones
 from models import (
-    ACTION_KIND_VALUES,
     ArtifactCard,
     BioMedObservation,
     BioMedVisibleState,
@@ -52,23 +52,12 @@ def _quality_to_uncertainty(quality_score: float | None) -> float | None:
     return round(_clamp(1.0 - quality_score, 0.05, 0.95), 4)
 
 
-_FORBIDDEN_PUBLIC_DATA_KEYS = {
-    "thermostability_risk",
-    "thermostability_bottleneck_risk",
-    "synergy_required",
-    "temperature_context",
-    "candidate_family_scores",
-    "artifact_risk",
-    "false_negative_risk",
-}
-
-
 def _sanitize_public_payload(value: Any) -> Any:
     if isinstance(value, dict):
         return {
             str(key): _sanitize_public_payload(item)
             for key, item in value.items()
-            if str(key) not in _FORBIDDEN_PUBLIC_DATA_KEYS
+            if str(key) not in FORBIDDEN_PUBLIC_DATA_KEYS
         }
     if isinstance(value, list):
         return [_sanitize_public_payload(item) for item in value]

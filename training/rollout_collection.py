@@ -110,8 +110,6 @@ def run_single_episode(
         step_idx += 1
 
     trajectory.metadata["final_visible_state"] = _state_dict(env)
-    terminal_truth = _latent_truth_summary(env) or {}
-    trajectory._benchmark_truth = terminal_truth
     trajectory.metadata["terminated"] = done
     trajectory.metadata["max_steps_reached"] = not done and step_idx >= max_steps
     trajectory.success = classify_success(trajectory)
@@ -136,6 +134,7 @@ def collect_rollouts(
         scenario_family = scenario_families[i % len(scenario_families)]
         seed = seed_start + i
         env = env_factory()
+        truth_summary: dict[str, Any] = {}
         try:
             trajectory = run_single_episode(
                 env=env,
@@ -146,10 +145,14 @@ def collect_rollouts(
                 max_steps=max_steps,
                 capture_latent_truth=capture_latent_truth,
             )
+            truth_summary = _latent_truth_summary(env) or {}
         finally:
             close = getattr(env, "close", None)
             if callable(close):
                 close()
+        trajectory.success = classify_success(trajectory, truth_summary=truth_summary or None)
+        if truth_summary:
+            dataset._benchmark_truth_sidecar[trajectory.episode_id] = truth_summary
         dataset.add(trajectory)
 
     return dataset

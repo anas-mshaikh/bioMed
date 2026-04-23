@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from models import ACTION_KIND_VALUES, BioMedAction
+from common.benchmark_contract import ACTION_KIND_VALUES
+from models import BioMedAction
 from training.evaluation import BioMedEvaluationSuite, classify_success
 from training.trajectory import Trajectory, TrajectoryDataset
 
@@ -177,6 +178,43 @@ def test_missing_decision_field_gets_no_stop_go_credit() -> None:
                 "recommendation": {
                     "primary_bottleneck": "thermostability",
                     "recommended_family": "thermostable_single",
+                    "confidence": 0.6,
+                }
+            },
+        ),
+        observation={"stage": "done", "done_reason": "final_decision_submitted"},
+        reward=1.0,
+        done=True,
+        reward_breakdown={"terminal": 1.0},
+        info={"rule_code": None, "hard_violations": [], "soft_violations": []},
+        visible_state={"spent_budget": 4.0, "spent_time_days": 1},
+    )
+
+    metrics = BioMedEvaluationSuite.benchmark_metrics(TrajectoryDataset([trajectory]))
+    assert metrics["stop_go_accuracy"] == 0.0
+
+
+def test_bare_stop_without_no_go_family_does_not_score_as_no_go() -> None:
+    trajectory = Trajectory(
+        episode_id="bare-stop",
+        seed=9,
+        scenario_family="no_go",
+        difficulty="easy",
+        policy_name="fixture",
+        metadata={
+            "terminal_truth": {
+                "true_bottleneck": "no_go",
+                "best_intervention_family": "no_go",
+            }
+        },
+    )
+    trajectory.add_step(
+        action=BioMedAction(
+            action_kind="finalize_recommendation",
+            parameters={
+                "recommendation": {
+                    "primary_bottleneck": "no_go",
+                    "decision": "stop",
                     "confidence": 0.6,
                 }
             },
@@ -458,3 +496,48 @@ def test_compare_datasets_flags_metric_schema_mismatch(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="Metric schema mismatch"):
         BioMedEvaluationSuite.compare_datasets(base, right)
+
+
+def test_compare_datasets_flags_missing_metric_keys(monkeypatch) -> None:
+    sample_trajectory = Trajectory(
+        episode_id="schema-left-missing",
+        seed=1,
+        scenario_family="high_crystallinity",
+        difficulty="easy",
+        policy_name="fixture",
+        metadata={
+            "terminal_truth": {
+                "true_bottleneck": "thermostability",
+                "best_intervention_family": "thermostable_single",
+            }
+        },
+    )
+    sample_trajectory.add_step(
+        action=BioMedAction(action_kind="inspect_feedstock", parameters={}),
+        observation={"stage": "triage"},
+        reward=0.1,
+        done=False,
+        reward_breakdown={"validity": 0.1},
+        visible_state={"spent_budget": 1.0, "spent_time_days": 0},
+    )
+
+    left = TrajectoryDataset([sample_trajectory])
+    right = TrajectoryDataset([Trajectory.from_dict(sample_trajectory.to_dict(include_benchmark_truth=True))])
+    right.trajectories[0].metadata["terminal_truth"] = sample_trajectory.metadata["terminal_truth"]
+
+    original = BioMedEvaluationSuite.evaluate_dataset
+
+    def _patched(dataset):
+        bundle = original(dataset)
+        if dataset is right:
+            bundle.benchmark = {
+                key: value
+                for key, value in bundle.benchmark.items()
+                if key != "soft_violation_rate"
+            }
+        return bundle
+
+    monkeypatch.setattr(BioMedEvaluationSuite, "evaluate_dataset", staticmethod(_patched))
+
+    with pytest.raises(ValueError, match="Metric schema mismatch"):
+        BioMedEvaluationSuite.compare_datasets(left, right)

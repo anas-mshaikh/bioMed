@@ -11,6 +11,7 @@ from common.terminal_labels import (
     FAMILY_ALIASES,
     infer_true_bottleneck,
     infer_true_family,
+    recommendation_has_explicit_no_go_semantics,
     milestone_count,
     recommendation_has_explicit_go_semantics,
     recommendation_has_explicit_stop_semantics,
@@ -51,8 +52,6 @@ class TerminalRewardEngine:
     def __init__(self, config: RewardConfig, potential: ProgressPotential) -> None:
         self.config = config
         self.potential = potential
-        self.BOTTLENECK_ALIASES = BOTTLENECK_ALIASES
-        self.FAMILY_ALIASES = FAMILY_ALIASES
 
     def compute(
         self,
@@ -76,12 +75,12 @@ class TerminalRewardEngine:
         bottleneck_score = self._set_match_score(
             predicted_bottleneck,
             true_bottleneck,
-            self.BOTTLENECK_ALIASES,
+            BOTTLENECK_ALIASES,
         )
         family_score = self._set_match_score(
             predicted_family,
             true_family,
-            self.FAMILY_ALIASES,
+            FAMILY_ALIASES,
         )
         stop_go_score = self._stop_go_score(
             true_family,
@@ -164,8 +163,6 @@ class TerminalRewardEngine:
             value = recommendation.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip().lower()
-        if recommendation_has_explicit_stop_semantics(recommendation):
-            return "no_go"
         return None
 
     def _predicted_stop(self, recommendation: dict[str, Any]) -> bool | None:
@@ -217,12 +214,12 @@ class TerminalRewardEngine:
         recommendation: dict[str, Any],
     ) -> float:
         if true_family == "no_go":
-            return 1.0 if recommendation_has_explicit_stop_semantics(recommendation) else 0.0
+            return 1.0 if recommendation_has_explicit_no_go_semantics(recommendation) else 0.0
         if not recommendation_has_explicit_go_semantics(recommendation):
             return 0.0
         if predicted_stop:
             return 0.0
-        if predicted_family:
+        if predicted_family and predicted_family != "no_go":
             return 1.0
         return 0.0
 
@@ -254,6 +251,7 @@ class TerminalRewardEngine:
         time_ratio = _clip(time_spent / max(time_total, 1.0), 0.0, 1.0)
 
         score = 0.0
+        structured_no_go = predicted_family == "no_go" and predicted_stop
 
         if predicted_family == "cocktail":
             if d.get("candidate_registry_queried", False) and (
@@ -271,7 +269,7 @@ class TerminalRewardEngine:
                 or d.get("thermostability_assay_run", False)
             ):
                 score += 0.4
-        elif predicted_family == "no_go" or predicted_stop:
+        elif structured_no_go:
             shortlist = raw_discoveries.get("candidate_shortlist", [])
             if isinstance(shortlist, list):
                 weak_high_cost = any(

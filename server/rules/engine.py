@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
+from common.benchmark_contract import ACTION_COSTS, ACTION_KIND_VALUES, EXPERT_ID_VALUES
 from common.terminal_labels import ASSAY_ROUTE_FAMILIES, milestone_count
 from models import BioMedAction
 from server.simulator.latent_state import LatentEpisodeState
-from server.simulator.transition import ACTION_COSTS
 from .types import RuleCheckResult, RuleDecision, RuleSeverity, RuleViolation
 
 
@@ -21,33 +21,9 @@ class RuleEngine:
     - never leak hidden truth
     """
 
-    _KNOWN_ACTIONS = frozenset(
-        {
-            "inspect_feedstock",
-            "measure_crystallinity",
-            "measure_contamination",
-            "estimate_particle_size",
-            "query_literature",
-            "query_candidate_registry",
-            "estimate_stability_signal",
-            "run_hydrolysis_assay",
-            "run_thermostability_assay",
-            "test_pretreatment",
-            "test_cocktail",
-            "ask_expert",
-            "state_hypothesis",
-            "finalize_recommendation",
-        }
-    )
+    _KNOWN_ACTIONS = frozenset(ACTION_KIND_VALUES)
 
-    _KNOWN_EXPERTS = frozenset(
-        {
-            "computational_biologist",
-            "wet_lab_lead",
-            "process_engineer",
-            "cost_reviewer",
-        }
-    )
+    _KNOWN_EXPERTS = frozenset(EXPERT_ID_VALUES)
 
     def get_legal_next_actions(self, latent: LatentEpisodeState) -> list[str]:
         if latent.done:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from common.terminal_labels import infer_true_family
 from models import BioMedAction, BioMedObservation, BioMedVisibleState
 from server.rules import RuleEngine
 
@@ -42,3 +43,7 @@ def test_visible_models_do_not_expose_hidden_truth_fields() -> None:
     assert "best_intervention_family" not in observation.model_dump()
     assert "candidate_family_scores" not in visible_state.model_dump()
 
+
+def test_unknown_family_labels_are_rejected() -> None:
+    with pytest.raises(ValueError, match="best_intervention_family"):
+        infer_true_family("legacy_family")

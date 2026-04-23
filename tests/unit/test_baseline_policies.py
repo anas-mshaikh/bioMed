@@ -185,6 +185,40 @@ def test_default_recommendation_prefers_contamination_when_evidence_is_high() ->
     assert recommendation["decision"] == "proceed"
 
 
+def test_default_recommendation_prefers_no_go_for_structured_cost_guidance() -> None:
+    recommendation = _default_recommendation(
+        observation={
+            "artifacts": [
+                {
+                    "artifact_type": "candidate_card",
+                    "data": {
+                        "candidate_family": "thermostable_single",
+                        "visible_score": 0.42,
+                        "cost_band": "high",
+                    },
+                }
+            ],
+            "expert_inbox": [
+                {
+                    "expert_id": "cost_reviewer",
+                    "summary": "Structured no-go guidance.",
+                    "data": {
+                        "guidance_class": "no_go",
+                        "suggested_next": "evaluate stop/go threshold explicitly",
+                    },
+                }
+            ],
+        },
+        trajectory=_trajectory_with_actions(
+            ["inspect_feedstock", "query_candidate_registry", "ask_expert"]
+        ),
+    )
+
+    assert recommendation["primary_bottleneck"] == "no_go"
+    assert recommendation["recommended_family"] == "no_go"
+    assert recommendation["decision"] == "stop"
+
+
 @pytest.mark.parametrize(
     ("observation", "expected_contamination", "expected_no_go"),
     [
@@ -266,6 +300,19 @@ def test_default_recommendation_prefers_contamination_when_evidence_is_high() ->
                             "visible_score": 0.81,
                             "cost_band": "medium",
                         },
+                    }
+                ]
+            },
+            False,
+            False,
+        ),
+        (
+            {
+                "artifacts": [
+                    {
+                        "artifact_type": "assay_report",
+                        "title": "Hydrolysis assay report",
+                        "data": {"artifact_suspected": True},
                     }
                 ]
             },
@@ -373,6 +420,10 @@ def test_expert_augmented_policy_uses_structured_expert_guidance() -> None:
                 {
                     "expert_id": "wet_lab_lead",
                     "summary": "Substrate accessibility and pretreatment leverage look like the highest-priority route.",
+                    "data": {
+                        "guidance_class": "pretreat_then_single",
+                        "suggested_next": "inspect or validate pretreatment leverage",
+                    },
                 }
             ],
         },
@@ -391,7 +442,7 @@ def test_expert_augmented_policy_uses_structured_expert_guidance() -> None:
         ("pretreat_then_single", "test_pretreatment"),
         ("thermostable_single", "run_thermostability_assay"),
         ("cocktail", "test_cocktail"),
-        ("no_go", "measure_contamination"),
+        ("no_go", "state_hypothesis"),
     ],
 )
 def test_expert_guidance_class_controls_routing_directly(guidance_class, expected_action) -> None:
@@ -406,6 +457,7 @@ def test_expert_guidance_class_controls_routing_directly(guidance_class, expecte
                 "run_hydrolysis_assay",
                 "ask_expert",
                 "query_candidate_registry",
+                "state_hypothesis",
             ],
             "artifacts": [
                 {

@@ -131,6 +131,62 @@ def test_hydrolysis_ordering_depends_on_route_relevant_evidence(
     assert correct_route_score > wrong_route_score
 
 
+@pytest.mark.parametrize(
+    ("action_kind", "route_family", "wrong_family"),
+    [
+        ("run_thermostability_assay", "thermostable_single", "cocktail"),
+        ("test_cocktail", "cocktail", "thermostable_single"),
+    ],
+)
+def test_late_assays_require_route_relevant_prerequisites(
+    reward_computer, high_crystallinity_latent, action_kind, route_family, wrong_family
+) -> None:
+    base_state = deepcopy(high_crystallinity_latent)
+    base_state.discoveries["candidate_registry_queried"] = True
+
+    generic = reward_computer.step_engine._ordering_score(
+        BioMedAction(action_kind=action_kind, parameters={}),
+        base_state,
+    )
+
+    route_state = deepcopy(base_state)
+    route_state.discoveries["candidate_shortlist"] = [
+        {
+            "candidate_family": route_family,
+            "visible_score": 0.9,
+            "cost_band": "high",
+        }
+    ]
+    route_state.discoveries[f"expert_reply:{action_kind}"] = {
+        "expert_id": "cost_reviewer",
+        "guidance_class": route_family,
+    }
+    route_score = reward_computer.step_engine._ordering_score(
+        BioMedAction(action_kind=action_kind, parameters={}),
+        route_state,
+    )
+
+    wrong_state = deepcopy(base_state)
+    wrong_state.discoveries["candidate_shortlist"] = [
+        {
+            "candidate_family": wrong_family,
+            "visible_score": 0.9,
+            "cost_band": "high",
+        }
+    ]
+    wrong_state.discoveries[f"expert_reply:{action_kind}:wrong"] = {
+        "expert_id": "cost_reviewer",
+        "guidance_class": wrong_family,
+    }
+    wrong_score = reward_computer.step_engine._ordering_score(
+        BioMedAction(action_kind=action_kind, parameters={}),
+        wrong_state,
+    )
+
+    assert route_score > generic
+    assert route_score > wrong_score
+
+
 def test_repeated_same_route_hydrolysis_is_not_positive(reward_computer, high_crystallinity_latent) -> None:
     state = deepcopy(high_crystallinity_latent)
     state.discoveries["feedstock_inspected"] = True

@@ -101,6 +101,20 @@ def test_missing_decision_field_gets_no_stop_go_credit(reward_computer, high_cry
     assert breakdown.components["stop_go_score"] == 0.0
 
 
+def test_bare_stop_without_no_go_family_does_not_score_as_no_go(
+    reward_computer, no_go_latent
+) -> None:
+    breakdown = reward_computer.terminal_reward(
+        state=no_go_latent,
+        recommendation={
+            "primary_bottleneck": "no_go",
+            "decision": "stop",
+            "confidence": 0.7,
+        },
+    )
+    assert breakdown.components["stop_go_score"] == 0.0
+
+
 def test_explicit_go_semantics_required_for_positive_stop_go_credit(
     reward_computer, high_crystallinity_latent
 ) -> None:
