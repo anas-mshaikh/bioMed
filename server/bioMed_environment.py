@@ -6,12 +6,11 @@ from typing import Any
 
 from common.terminal_labels import completed_canonical_milestones
 from models import BioMedAction, BioMedObservation, BioMedVisibleState
-from server.simulator.observation_builder import BioMedObservationBuilder
 from server.rewards import RewardComputer
 from server.rules import RuleEngine
-from server.tasks.scenarios import sample_episode_latent_state
+from server.simulator.observation_builder import BioMedObservationBuilder
 from server.simulator.transition import BioMedTransitionEngine
-# from openenv.core.client_types import StepResult
+from server.tasks.scenarios import sample_episode_latent_state
 
 
 @dataclass
@@ -44,7 +43,97 @@ class BioMedEnvironment:
         self.observation_builder = BioMedObservationBuilder()
 
         self._episode_id: str | None = None
-        self._latent = None
+        self._latent: Any | None = None
+
+    # -----------------------------
+    # Core lifecycle helpers
+    # -----------------------------
+
+    def _require_latent(self) -> Any:
+        if self._latent is None:
+            raise RuntimeError("Call reset() before accessing episode state.")
+        return self._latent
+
+    def _legal_next_actions(self, latent: Any) -> list[str]:
+        return self.rule_engine.get_legal_next_actions(latent)
+
+    def _build_visible_state(self, latent: Any) -> BioMedVisibleState:
+        return BioMedVisibleState(
+            episode_id=self._episode_id or "",
+            step_count=latent.step_count,
+            scenario_family=latent.scenario_family,
+            difficulty=latent.difficulty,
+            stage=latent.stage,
+            spent_budget=latent.budget_spent,
+            spent_time_days=latent.time_spent_days,
+            completed_milestones=completed_canonical_milestones(latent.completed_milestones),
+            history_length=len(latent.history),
+        )
+
+    def _extract_recommendation(self, action: BioMedAction) -> dict[str, Any]:
+        parameters = action.parameters or {}
+        recommendation = parameters.get("recommendation", {})
+        return recommendation if isinstance(recommendation, dict) else {}
+
+    def _make_step_result(
+        self,
+        *,
+        observation: BioMedObservation,
+        reward_breakdown: Any,
+        done: bool,
+        rule_code: str | None,
+        hard_violations: list[str],
+        soft_violations: list[str],
+    ) -> LocalStepResult:
+        return LocalStepResult(
+            observation=observation,
+            reward=reward_breakdown.total,
+            done=done,
+            reward_breakdown=reward_breakdown.to_dict(),
+            rule_code=rule_code,
+            hard_violations=hard_violations,
+            soft_violations=soft_violations,
+        )
+
+    def _handle_blocked_action(
+        self,
+        *,
+        latent: Any,
+        action: BioMedAction,
+        rule_result: Any,
+    ) -> LocalStepResult:
+        latent.progress.advance_step()
+        latent.append_history(
+            action_kind=action.action_kind,
+            summary=f"Blocked action: {'; '.join(rule_result.hard_messages)}",
+            budget_delta=0.0,
+            time_delta_days=0,
+            metadata={
+                "blocked": True,
+                "hard_violations": list(rule_result.hard_messages),
+                "soft_violations": list(rule_result.soft_messages),
+            },
+        )
+
+        reward_breakdown = self.reward_computer.invalid_action_penalty(rule_result)
+        observation = self.observation_builder.build_invalid_action_observation(
+            latent=latent,
+            decision=rule_result.decision,
+            legal_next_actions=self._legal_next_actions(latent),
+        )
+
+        return self._make_step_result(
+            observation=observation,
+            reward_breakdown=reward_breakdown,
+            done=latent.done,
+            rule_code=rule_result.decision.rule_code,
+            hard_violations=list(rule_result.hard_messages),
+            soft_violations=list(rule_result.soft_messages),
+        )
+
+    # -----------------------------
+    # OpenEnv-facing API
+    # -----------------------------
 
     def reset(
         self,
@@ -52,6 +141,9 @@ class BioMedEnvironment:
         scenario_family: str | None = None,
         difficulty: str | None = None,
     ) -> BioMedObservation:
+        # Start clean for a fresh episode.
+        self.close()
+
         resolved_seed = 0 if seed is None else seed
         self._latent = sample_episode_latent_state(
             seed=resolved_seed,
@@ -62,49 +154,25 @@ class BioMedEnvironment:
 
         bundle = self.observation_builder.build_reset_bundle(
             self._latent,
-            legal_next_actions=self.rule_engine.get_legal_next_actions(self._latent),
+            legal_next_actions=self._legal_next_actions(self._latent),
         )
         return bundle.observation
 
     def step(self, action: BioMedAction) -> LocalStepResult:
-        if self._latent is None:
-            raise RuntimeError("Call reset() before step().")
+        latent = self._require_latent()
 
-        rule_result = self.rule_engine.validate_action(self._latent, action)
-
+        rule_result = self.rule_engine.validate_action(latent, action)
         if rule_result.hard_violations:
-            self._latent.progress.advance_step()
-            self._latent.append_history(
-                action_kind=action.action_kind,
-                summary=f"Blocked action: {'; '.join(rule_result.hard_messages)}",
-                budget_delta=0.0,
-                time_delta_days=0,
-                metadata={
-                    "blocked": True,
-                    "hard_violations": list(rule_result.hard_messages),
-                    "soft_violations": list(rule_result.soft_messages),
-                },
-            )
-            reward_breakdown = self.reward_computer.invalid_action_penalty(rule_result)
-            observation = self.observation_builder.build_invalid_action_observation(
-                latent=self._latent,
-                decision=rule_result.decision,
-                legal_next_actions=self.rule_engine.get_legal_next_actions(self._latent),
-            )
-            return LocalStepResult(
-                observation=observation,
-                reward=reward_breakdown.total,
-                done=self._latent.done,
-                reward_breakdown=reward_breakdown.to_dict(),
-                rule_code=rule_result.decision.rule_code,
-                hard_violations=list(rule_result.hard_messages),
-                soft_violations=list(rule_result.soft_messages),
+            return self._handle_blocked_action(
+                latent=latent,
+                action=action,
+                rule_result=rule_result,
             )
 
-        prev_latent = deepcopy(self._latent)
+        prev_latent = deepcopy(latent)
 
         transition_result = self.transition_engine.step(
-            state=self._latent,
+            state=latent,
             action=action,
             soft_violations=rule_result.soft_messages,
         )
@@ -119,25 +187,23 @@ class BioMedEnvironment:
         )
 
         if self._latent.done:
-            recommendation = (action.parameters or {}).get("recommendation", {})
             terminal_breakdown = self.reward_computer.terminal_reward(
                 state=self._latent,
-                recommendation=recommendation,
+                recommendation=self._extract_recommendation(action),
             )
             reward_breakdown.merge(terminal_breakdown)
 
-        observation = self.observation_builder.build_step_bundle(
+        bundle = self.observation_builder.build_step_bundle(
             self._latent,
             transition_result.effect,
-            legal_next_actions=self.rule_engine.get_legal_next_actions(self._latent),
+            legal_next_actions=self._legal_next_actions(self._latent),
             extra_warnings=rule_result.decision.as_observation_messages(),
         )
 
-        return LocalStepResult(
-            observation=observation.observation,
-            reward=reward_breakdown.total,
+        return self._make_step_result(
+            observation=bundle.observation,
+            reward_breakdown=reward_breakdown,
             done=self._latent.done,
-            reward_breakdown=reward_breakdown.to_dict(),
             rule_code=rule_result.decision.rule_code,
             hard_violations=list(rule_result.hard_messages),
             soft_violations=list(rule_result.soft_messages),
@@ -145,25 +211,17 @@ class BioMedEnvironment:
 
     @property
     def state(self) -> BioMedVisibleState:
-        if self._latent is None:
-            raise RuntimeError("Call reset() before state().")
-
-        return BioMedVisibleState(
-            episode_id=self._episode_id or "",
-            step_count=self._latent.step_count,
-            scenario_family=self._latent.scenario_family,
-            difficulty=self._latent.difficulty,
-            stage=self._latent.stage,
-            spent_budget=self._latent.budget_spent,
-            spent_time_days=self._latent.time_spent_days,
-            completed_milestones=completed_canonical_milestones(
-                self._latent.completed_milestones
-            ),
-            history_length=len(self._latent.history),
-        )
+        latent = self._require_latent()
+        return self._build_visible_state(latent)
 
     def close(self) -> None:
-        return None
+        self._latent = None
+        self._episode_id = None
+
+    # -----------------------------
+    # Async wrappers
+    # Keep these thin and shape-consistent.
+    # -----------------------------
 
     async def reset_async(
         self,
@@ -171,6 +229,7 @@ class BioMedEnvironment:
         episode_id: str | None = None,
         **kwargs: object,
     ) -> BioMedObservation:
+        _ = episode_id  # reserved for future use
         return self.reset(
             seed=seed,
             scenario_family=kwargs.get("scenario_family")
@@ -186,14 +245,10 @@ class BioMedEnvironment:
         action: BioMedAction,
         timeout_s: float | None = None,
         **kwargs: object,
-    ) -> BioMedObservation:
-        result = self.step(action)
-        return result.observation.model_copy(
-            update={
-                "reward": result.reward,
-                "done": result.done,
-            }
-        )
+    ) -> LocalStepResult:
+        _ = timeout_s
+        _ = kwargs
+        return self.step(action)
 
     async def close_async(self) -> None:
         self.close()
