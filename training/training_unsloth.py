@@ -57,6 +57,7 @@ class BioMedUnslothConfig:
     # Safety
     dry_run: bool = False
     report_to: str = "none"
+    show_curriculum_hint: bool = False
 
 
 def parse_args() -> BioMedUnslothConfig:
@@ -93,7 +94,8 @@ def parse_args() -> BioMedUnslothConfig:
     parser.add_argument("--logging-steps", type=int, default=1)
     parser.add_argument("--save-steps", type=int, default=10)
 
-    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--dry-run", action="store_true", default=False)
+    parser.add_argument("--show-curriculum-hint", action="store_true", default=False)
 
     args = parser.parse_args()
     families = tuple(item.strip() for item in args.scenario_families.split(",") if item.strip())
@@ -214,11 +216,13 @@ def to_base_config(config: BioMedUnslothConfig) -> base.BioMedTrainingConfig:
         num_generations=config.num_generations,
         max_completion_length=config.max_completion_length,
         report_to=config.report_to,
+        dry_run=config.dry_run,
+        show_curriculum_hint=config.show_curriculum_hint,
     )
 
 
-base_config = to_base_config(config)
-dataset = base.build_train_dataset(base_config)
+# base_config = to_base_config(config)
+# dataset = base.build_train_dataset(base_config)
 
 
 def build_grpo_config(config: BioMedUnslothConfig) -> Any:

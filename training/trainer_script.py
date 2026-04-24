@@ -39,6 +39,7 @@ class BioMedTrainingConfig:
     dataset_episodes: int = 64
     scenario_families: tuple[str, ...] = tuple(DEFAULT_SCENARIO_FAMILIES)
     difficulty: str = "easy"
+    show_curriculum_hint: bool = False
 
     # Backend
     backend: str = "local"  # local | remote
