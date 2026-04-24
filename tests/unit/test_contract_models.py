@@ -75,9 +75,7 @@ def test_runtime_package_does_not_emit_legacy_aliases() -> None:
     combined = "\n".join(
         path.read_text(encoding="utf-8")
         if path.is_file()
-        else "\n".join(
-            child.read_text(encoding="utf-8") for child in sorted(path.rglob("*.py"))
-        )
+        else "\n".join(child.read_text(encoding="utf-8") for child in sorted(path.rglob("*.py")))
         for path in runtime_paths
     )
 

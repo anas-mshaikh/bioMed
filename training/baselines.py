@@ -20,6 +20,7 @@ from models import (
     structured_expert_guidance_from_observation,
     terminal_recommendation_rationale,
 )
+from models.semantics import infer_recommendation_from_structured_signals
 
 ASSAY_ROUTE_FAMILIES = {
     InterventionFamily.PRETREAT_THEN_SINGLE.value,
@@ -277,19 +278,6 @@ def _trajectory_action_kinds(trajectory: Any) -> set[str]:
     }
 
 
-def _last_hypothesis_text(trajectory: Any) -> str:
-    for step in reversed(getattr(trajectory, "steps", [])):
-        action = getattr(step, "action", {}) or {}
-        if str(action.get("action_kind", "")) != "state_hypothesis":
-            continue
-        params = action.get("parameters", {})
-        if isinstance(params, dict):
-            hypothesis = params.get("hypothesis", "")
-            if isinstance(hypothesis, str):
-                return hypothesis.lower()
-    return ""
-
-
 def _trajectory_context(trajectory: Any) -> dict[str, bool]:
     action_kinds = _trajectory_action_kinds(trajectory)
     return {
@@ -436,53 +424,24 @@ def _default_hypothesis(observation: Any, trajectory: Any) -> str:
 def _default_recommendation(observation: Any, trajectory: Any) -> dict[str, Any]:
     signals = _extract_signals(observation, trajectory)
     context = _trajectory_context(trajectory)
-    actions_taken = signals["actions_taken"]
-    hypothesis_text = _last_hypothesis_text(trajectory)
 
-    family = signals["top_route"]
-    bottleneck = "candidate_mismatch"
-    decision_type = DecisionType.PROCEED.value
+    economic_no_go = _has_economic_no_go_evidence(signals, context)
+
+    semantics = infer_recommendation_from_structured_signals(
+        top_route=signals["top_route"],
+        expert_guidance_class=signals["expert_guidance_class"],
+        contamination_signal=signals["contamination_signal"],
+        cocktail_strong=signals["cocktail_strong"],
+        pretreatment_promising=signals["pretreatment_promising"],
+        crystallinity_high=signals["crystallinity_high"],
+        stability_low=signals["stability_low"],
+        economic_no_go=economic_no_go,
+    )
+
+    family = semantics["recommended_family"]
+    bottleneck = semantics["bottleneck"]
+    decision_type = semantics["decision_type"]
     continue_exploration = False
-
-    if signals["expert_guidance_class"] == "no_go" or _has_economic_no_go_evidence(signals, context):
-        family = "no_go"
-        bottleneck = "no_go"
-        decision_type = DecisionType.NO_GO.value
-    elif signals["contamination_signal"]:
-        family = (
-            signals["expert_guidance_class"]
-            if signals["expert_guidance_class"] in ASSAY_ROUTE_FAMILIES
-            else signals["top_route"]
-        )
-        bottleneck = "contamination_artifact"
-        decision_type = DecisionType.PROCEED.value
-    elif signals["cocktail_strong"]:
-        family = "cocktail"
-        bottleneck = "cocktail_synergy"
-    elif signals["pretreatment_promising"] or (
-        signals["crystallinity_high"] and signals["top_route"] == "pretreat_then_single"
-    ):
-        family = "pretreat_then_single"
-        bottleneck = "substrate_accessibility"
-    elif signals["stability_low"]:
-        family = "thermostable_single"
-        bottleneck = "thermostability"
-    elif (
-        "substrate accessibility" in hypothesis_text
-        or "pretreatment sensitivity" in hypothesis_text
-    ):
-        family = "pretreat_then_single"
-        bottleneck = "substrate_accessibility"
-    elif "thermostability" in hypothesis_text or "operating conditions" in hypothesis_text:
-        family = "thermostable_single"
-        bottleneck = "thermostability"
-    elif "contamination" in hypothesis_text or "artifact" in hypothesis_text:
-        family = "no_go"
-        bottleneck = "no_go"
-        decision_type = DecisionType.NO_GO.value
-    elif "synergy" in hypothesis_text or "cocktail" in hypothesis_text:
-        family = "cocktail"
-        bottleneck = "cocktail_synergy"
 
     confidence = 0.30
     if context["candidate"]:
@@ -491,7 +450,7 @@ def _default_recommendation(observation: Any, trajectory: Any) -> dict[str, Any]
         confidence = 0.60
     if context["high_signal"] and context["hypothesis"]:
         confidence = 0.72
-    if family == "no_go" and _has_economic_no_go_evidence(signals, context):
+    if family == InterventionFamily.NO_GO.value and economic_no_go:
         confidence = 0.78
 
     evidence_artifact_ids = [
@@ -536,7 +495,9 @@ def _build_action(action_kind: str, observation: Any, trajectory: Any) -> BioMed
     if action_kind == "ask_expert":
         return BioMedAction(
             action_kind=ActionKind(action_kind),
-            parameters=ExpertQueryParams(expert_id=ExpertId(_choose_expert(observation, trajectory))),
+            parameters=ExpertQueryParams(
+                expert_id=ExpertId(_choose_expert(observation, trajectory))
+            ),
         )
     if action_kind == "state_hypothesis":
         return BioMedAction(
@@ -820,9 +781,7 @@ class ExpertAugmentedHeuristicPolicy(BasePolicy):
 
         if (
             not signals["contamination_signal"]
-            and (
-                signals["stability_low"] or signals["top_route"] == "thermostable_single"
-            )
+            and (signals["stability_low"] or signals["top_route"] == "thermostable_single")
             and "run_thermostability_assay" in legal
             and _count_taken(trajectory, "run_thermostability_assay") == 0
         ):

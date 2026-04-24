@@ -7,10 +7,95 @@ from .contract import (
     ACTION_PARAMETER_REQUIREMENTS,
     ActionKind,
     BottleneckKind,
+    DecisionType,
     EVIDENCE_MILESTONE_KEYS,
     InterventionFamily,
 )
 from .observation import ActionSpec
+
+EXPERT_GUIDANCE_FOLLOWUP_ACTIONS: dict[InterventionFamily, frozenset[str]] = {
+    InterventionFamily.COCKTAIL: frozenset({"test_cocktail"}),
+    InterventionFamily.PRETREAT_THEN_SINGLE: frozenset(
+        {"test_pretreatment", "measure_crystallinity"}
+    ),
+    InterventionFamily.THERMOSTABLE_SINGLE: frozenset(
+        {"run_thermostability_assay", "estimate_stability_signal"}
+    ),
+}
+
+ASSAY_ROUTE_FAMILIES: frozenset[InterventionFamily] = frozenset(
+    {
+        InterventionFamily.PRETREAT_THEN_SINGLE,
+        InterventionFamily.THERMOSTABLE_SINGLE,
+        InterventionFamily.COCKTAIL,
+    }
+)
+
+
+def normalize_action_kind(value: Any) -> str | None:
+    if isinstance(value, ActionKind):
+        return value.value
+    if not isinstance(value, str):
+        return None
+
+    normalized = value.strip().lower()
+    try:
+        return ActionKind(normalized).value
+    except ValueError:
+        return None
+
+
+def expert_guidance_followup_actions(
+    guidance: str | InterventionFamily | None,
+) -> frozenset[str]:
+    family = normalize_intervention_family(guidance)
+    if family is None:
+        return frozenset()
+    return EXPERT_GUIDANCE_FOLLOWUP_ACTIONS.get(family, frozenset())
+
+
+def recommendation_follows_expert_guidance(
+    *,
+    guidance: str | InterventionFamily | None,
+    recommended_family: str | InterventionFamily | None,
+    decision_type: str | DecisionType | None,
+) -> bool:
+    guidance_family = normalize_intervention_family(guidance)
+    recommendation_family = normalize_intervention_family(recommended_family)
+    decision = normalize_decision_type(decision_type)
+
+    if guidance_family is None:
+        return False
+
+    if guidance_family == InterventionFamily.NO_GO:
+        return recommendation_family == InterventionFamily.NO_GO or decision == DecisionType.NO_GO
+
+    return recommendation_family == guidance_family
+
+
+def action_sequence_follows_expert_guidance(
+    *,
+    guidance: str | InterventionFamily | None,
+    action_kinds: Sequence[Any],
+) -> bool:
+    guidance_family = normalize_intervention_family(guidance)
+    if guidance_family is None:
+        return False
+
+    if guidance_family == InterventionFamily.NO_GO:
+        return False
+
+    canonical_followups = expert_guidance_followup_actions(guidance_family)
+    if not canonical_followups:
+        return False
+
+    observed_actions = {
+        normalized
+        for action in action_kinds
+        if (normalized := normalize_action_kind(action)) is not None
+    }
+
+    return bool(observed_actions.intersection(canonical_followups))
 
 
 def milestone_count(discoveries: Mapping[str, Any] | Any) -> int:
@@ -109,6 +194,58 @@ def infer_true_bottleneck(
     return BottleneckKind.CANDIDATE_MISMATCH
 
 
+def infer_recommendation_from_structured_signals(
+    *,
+    top_route: str | InterventionFamily,
+    expert_guidance_class: str | InterventionFamily | None = None,
+    contamination_signal: bool = False,
+    cocktail_strong: bool = False,
+    pretreatment_promising: bool = False,
+    crystallinity_high: bool = False,
+    stability_low: bool = False,
+    economic_no_go: bool = False,
+) -> dict[str, str]:
+    """Infer terminal recommendation semantics from structured benchmark signals.
+
+    This function is intentionally the canonical mapping layer for baseline and
+    evaluation code. It must not inspect free-text hypotheses or natural-language
+    rationale. Text parsing belongs only at the model-output parsing boundary.
+    """
+    parsed_top_route = normalize_intervention_family(top_route)
+    family = parsed_top_route or InterventionFamily.THERMOSTABLE_SINGLE
+
+    parsed_expert_guidance = normalize_intervention_family(expert_guidance_class)
+    bottleneck = BottleneckKind.CANDIDATE_MISMATCH
+    decision_type = DecisionType.PROCEED
+
+    if parsed_expert_guidance == InterventionFamily.NO_GO or economic_no_go:
+        family = InterventionFamily.NO_GO
+        bottleneck = BottleneckKind.NO_GO
+        decision_type = DecisionType.NO_GO
+    elif contamination_signal:
+        if parsed_expert_guidance in ASSAY_ROUTE_FAMILIES:
+            family = parsed_expert_guidance
+        bottleneck = BottleneckKind.CONTAMINATION_ARTIFACT
+        decision_type = DecisionType.PROCEED
+    elif cocktail_strong:
+        family = InterventionFamily.COCKTAIL
+        bottleneck = BottleneckKind.COCKTAIL_SYNERGY
+    elif pretreatment_promising or (
+        crystallinity_high and family == InterventionFamily.PRETREAT_THEN_SINGLE
+    ):
+        family = InterventionFamily.PRETREAT_THEN_SINGLE
+        bottleneck = BottleneckKind.SUBSTRATE_ACCESSIBILITY
+    elif stability_low:
+        family = InterventionFamily.THERMOSTABLE_SINGLE
+        bottleneck = BottleneckKind.THERMOSTABILITY
+
+    return {
+        "bottleneck": bottleneck.value,
+        "recommended_family": family.value,
+        "decision_type": decision_type.value,
+    }
+
+
 def terminal_recommendation_rationale(
     bottleneck: BottleneckKind, recommended_family: InterventionFamily
 ) -> str:
@@ -147,6 +284,34 @@ def recommendation_has_explicit_stop_semantics(recommendation: Mapping[str, Any]
 
 def normalize_structured_expert_guidance_class(value: Any) -> InterventionFamily | None:
     return _parse_intervention_family(value)
+
+
+def normalize_intervention_family(value: Any) -> InterventionFamily | None:
+    return _parse_intervention_family(value)
+
+
+def normalize_bottleneck_kind(value: Any) -> BottleneckKind | None:
+    if isinstance(value, BottleneckKind):
+        return value
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    try:
+        return BottleneckKind(normalized)
+    except ValueError:
+        return None
+
+
+def normalize_decision_type(value: Any) -> DecisionType | None:
+    if isinstance(value, DecisionType):
+        return value
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    try:
+        return DecisionType(normalized)
+    except ValueError:
+        return None
 
 
 def _parse_intervention_family(value: Any) -> InterventionFamily | None:

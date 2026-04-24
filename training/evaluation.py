@@ -20,6 +20,10 @@ from models import (
     structured_expert_guidance_from_observation,
 )
 from .trajectory import Trajectory, TrajectoryDataset
+from models.semantics import (
+    action_sequence_follows_expert_guidance,
+    recommendation_follows_expert_guidance,
+)
 
 
 def _mean(values: list[float]) -> float:
@@ -42,15 +46,15 @@ def _zero_metric_map(keys: tuple[str, ...]) -> dict[str, float]:
     return {key: 0.0 for key in keys}
 
 
-def _validate_metric_schema(metrics: dict[str, float], keys: tuple[str, ...], *, label: str) -> None:
+def _validate_metric_schema(
+    metrics: dict[str, float], keys: tuple[str, ...], *, label: str
+) -> None:
     expected = set(keys)
     actual = set(metrics)
     missing = sorted(expected - actual)
     extra = sorted(actual - expected)
     if missing or extra:
-        raise ValueError(
-            f"Metric schema mismatch in {label}: missing={missing}, extra={extra}"
-        )
+        raise ValueError(f"Metric schema mismatch in {label}: missing={missing}, extra={extra}")
 
 
 def _last_visible_state(traj: Trajectory) -> dict[str, Any]:
@@ -145,32 +149,22 @@ def _expert_hint_was_followed(traj: Trajectory, idx: int, hint: str | None) -> b
     if hint is None:
         return False
 
-    future_actions = [str(step.action.get("action_kind", "")) for step in traj.steps[idx + 1 :]]
-    recommendation = _last_recommendation(traj)
-    recommended_family = str(recommendation.get("recommended_family", "") or "").lower()
-    decision = str(recommendation.get("decision_type", "") or "").lower()
+    future_actions = [
+        step.action.get("action_kind")
+        for step in traj.steps[idx + 1 :]
+        if isinstance(step.action, dict)
+    ]
 
-    if hint == "no_go":
-        return recommended_family == "no_go" or decision == "no_go"
-    if hint == "cocktail":
-        return "test_cocktail" in future_actions or recommended_family == "cocktail"
-    if hint == "pretreat_then_single":
-        return (
-            any(
-                action in future_actions
-                for action in {"test_pretreatment", "measure_crystallinity"}
-            )
-            or recommended_family == "pretreat_then_single"
-        )
-    if hint == "thermostable_single":
-        return (
-            any(
-                action in future_actions
-                for action in {"run_thermostability_assay", "estimate_stability_signal"}
-            )
-            or recommended_family == "thermostable_single"
-        )
-    return False
+    recommendation = _last_recommendation(traj)
+
+    return action_sequence_follows_expert_guidance(
+        guidance=hint,
+        action_kinds=future_actions,
+    ) or recommendation_follows_expert_guidance(
+        guidance=hint,
+        recommended_family=recommendation.get("recommended_family"),
+        decision_type=recommendation.get("decision_type"),
+    )
 
 
 def _extract_predicted_bottleneck(traj: Trajectory) -> str | None:
@@ -253,7 +247,11 @@ def classify_success(traj: Trajectory, truth_summary: dict[str, Any] | None = No
     stop_match = 0.0
     if truth_family and has_final_recommendation:
         if truth_family == "no_go":
-            stop_match = 1.0 if recommendation_has_explicit_no_go_semantics(_last_recommendation(traj)) else 0.0
+            stop_match = (
+                1.0
+                if recommendation_has_explicit_no_go_semantics(_last_recommendation(traj))
+                else 0.0
+            )
         else:
             predicted_stop = _extract_predicted_stop(traj)
             stop_match = (
@@ -393,7 +391,8 @@ class BioMedEvaluationSuite:
                     predicted_stop = _extract_predicted_stop(traj)
                     stop_scores.append(
                         1.0
-                        if predicted_stop is False and _extract_predicted_family(traj) not in {None, "no_go"}
+                        if predicted_stop is False
+                        and _extract_predicted_family(traj) not in {None, "no_go"}
                         else 0.0
                     )
             elif truth_family:

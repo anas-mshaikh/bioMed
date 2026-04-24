@@ -26,7 +26,11 @@ def test_trajectory_persists_canonical_legal_action_specs(tmp_path) -> None:
     trajectory.add_step(
         action=BioMedAction(action_kind=ActionKind.INSPECT_FEEDSTOCK),
         observation={
-            "episode": {"episode_id": "episode-1", "step_count": 1, "schema_version": SCHEMA_VERSION},
+            "episode": {
+                "episode_id": "episode-1",
+                "step_count": 1,
+                "schema_version": SCHEMA_VERSION,
+            },
             "task_summary": "Task.",
             "stage": "triage",
             "resources": {"budget_remaining": 9.0, "time_remaining_days": 2},
