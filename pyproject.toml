@@ -25,6 +25,17 @@ dev = [
   "mypy",
 ]
 
+train = [
+  "datasets",
+  "trl",
+  "transformers",
+  "accelerate",
+  "torch",
+  "matplotlib",
+]
+
+unsloth = []
+
 [tool.setuptools]
 py-modules = ["client"]
 
@@ -43,3 +54,5 @@ markers = [
   "e2e: slower end-to-end benchmark and deployment tests",
   "slow: slow-running tests that should not block the default fast lane",
 ]
+
+

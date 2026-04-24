@@ -1,0 +1,9 @@
+# Install after the normal training dependencies.
+# Important: use --no-deps to avoid downgrading TRL/Transformers in the main environment.
+#
+# Example:
+#   uv sync --extra train
+#   uv pip install -r requirements-unsloth.txt --no-deps
+
+unsloth>=2025.10.14
+unsloth_zoo

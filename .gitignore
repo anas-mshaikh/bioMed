@@ -9,3 +9,4 @@ outputs/evals/*
 *.pyc
 .env
 outputs/
+bioMed.egg-info/

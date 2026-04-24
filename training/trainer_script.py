@@ -236,7 +236,10 @@ def reward_func(environments: list[Any], **kwargs: Any) -> list[float]:
     del kwargs
     rewards: list[float] = []
     for env in environments:
-        rewards.append(float(getattr(env, "reward", 0.0)))
+        reward = getattr(env, "training_reward", None)
+        if reward is None:
+            reward = getattr(env, "reward", 0.0)
+        rewards.append(float(reward or 0.0))
     return rewards
 
 
