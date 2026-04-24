@@ -8,7 +8,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Iterable, Mapping, Sequence
 
-from common.benchmark_contract import PRIVATE_TRUTH_METADATA_KEYS
+from models import PRIVATE_TRUTH_METADATA_KEYS, SCHEMA_VERSION
 
 
 def _is_sequence(value: Any) -> bool:
@@ -49,6 +49,23 @@ def to_serializable(value: Any) -> Any:
     return repr(value)
 
 
+def _normalize_legal_action_specs(value: Sequence[Any] | Any) -> list[dict[str, Any]]:
+    if not _is_sequence(value):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for item in value:
+        if hasattr(item, "model_dump"):
+            dumped = item.model_dump(mode="json")
+            if isinstance(dumped, Mapping):
+                normalized.append(dict(dumped))
+            continue
+        if isinstance(item, Mapping):
+            normalized.append({str(k): to_serializable(v) for k, v in item.items()})
+            continue
+        normalized.append({"action_kind": str(item), "required_fields": [], "optional_fields": []})
+    return normalized
+
+
 @dataclass
 class TrajectoryStep:
     step_index: int
@@ -59,10 +76,11 @@ class TrajectoryStep:
     reward_breakdown: dict[str, Any] = field(default_factory=dict)
     info: dict[str, Any] = field(default_factory=dict)
     visible_state: dict[str, Any] | None = None
-    legal_next_actions: list[str] = field(default_factory=list)
+    legal_next_actions: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     latent_snapshot: dict[str, Any] | None = None
     timestamp_utc: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    schema_version: str = SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,10 +92,11 @@ class TrajectoryStep:
             "reward_breakdown": to_serializable(self.reward_breakdown),
             "info": to_serializable(self.info),
             "visible_state": to_serializable(self.visible_state),
-            "legal_next_actions": [str(x) for x in self.legal_next_actions],
+            "legal_next_actions": to_serializable(self.legal_next_actions),
             "warnings": [str(x) for x in self.warnings],
             "latent_snapshot": to_serializable(self.latent_snapshot),
             "timestamp_utc": self.timestamp_utc,
+            "schema_version": self.schema_version,
         }
 
     @classmethod
@@ -91,10 +110,11 @@ class TrajectoryStep:
             reward_breakdown=dict(payload.get("reward_breakdown", {})),
             info=dict(payload.get("info", {})),
             visible_state=payload.get("visible_state"),
-            legal_next_actions=[str(x) for x in payload.get("legal_next_actions", [])],
+            legal_next_actions=_normalize_legal_action_specs(payload.get("legal_next_actions", [])),
             warnings=[str(x) for x in payload.get("warnings", [])],
             latent_snapshot=payload.get("latent_snapshot"),
             timestamp_utc=str(payload.get("timestamp_utc", "")),
+            schema_version=str(payload.get("schema_version", SCHEMA_VERSION)),
         )
 
 
@@ -109,6 +129,7 @@ class Trajectory:
     metadata: dict[str, Any] = field(default_factory=dict)
     success: bool | None = None
     _benchmark_truth: dict[str, Any] = field(default_factory=dict, repr=False)
+    schema_version: str = SCHEMA_VERSION
 
     def add_step(
         self,
@@ -120,7 +141,7 @@ class Trajectory:
         reward_breakdown: Mapping[str, Any] | None = None,
         info: Mapping[str, Any] | None = None,
         visible_state: Any = None,
-        legal_next_actions: Sequence[str] | None = None,
+        legal_next_actions: Sequence[Any] | None = None,
         warnings: Sequence[str] | None = None,
         latent_snapshot: Mapping[str, Any] | None = None,
     ) -> None:
@@ -133,7 +154,7 @@ class Trajectory:
             reward_breakdown=dict(reward_breakdown or {}),
             info=dict(info or {}),
             visible_state=to_serializable(visible_state),
-            legal_next_actions=[str(x) for x in (legal_next_actions or [])],
+            legal_next_actions=_normalize_legal_action_specs(legal_next_actions or []),
             warnings=[str(x) for x in (warnings or [])],
             latent_snapshot=dict(latent_snapshot or {}) if latent_snapshot else None,
         )
@@ -185,6 +206,7 @@ class Trajectory:
             "num_steps": self.num_steps,
             "success": self.success,
             "metadata": to_serializable(public_metadata),
+            "schema_version": self.schema_version,
         }
 
     @classmethod
@@ -197,6 +219,7 @@ class Trajectory:
             policy_name=str(payload.get("policy_name", "unknown")),
             metadata=dict(payload.get("metadata", {})),
             success=payload.get("success"),
+            schema_version=str(payload.get("schema_version", SCHEMA_VERSION)),
         )
         trajectory.steps = [TrajectoryStep.from_dict(step) for step in payload.get("steps", [])]
         return trajectory

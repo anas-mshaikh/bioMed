@@ -3,11 +3,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from common.benchmark_contract import ACTION_COSTS
-from models import BioMedAction
-from common.terminal_labels import (
-    ASSAY_ROUTE_FAMILIES,
+from models import (
+    ACTION_COSTS,
+    BioMedAction,
     EVIDENCE_MILESTONE_KEYS,
+    InterventionFamily,
     milestone_count,
     normalize_structured_expert_guidance_class,
 )
@@ -72,7 +72,13 @@ def _milestone_delta(prev_state: object, next_state: object) -> int:
 
 def _action_kind_and_params(action_or_kind: BioMedAction | str) -> tuple[str, Mapping[str, Any]]:
     if isinstance(action_or_kind, BioMedAction):
-        params = action_or_kind.parameters if isinstance(action_or_kind.parameters, Mapping) else {}
+        params = (
+            action_or_kind.parameters.model_dump(mode="json")
+            if hasattr(action_or_kind.parameters, "model_dump")
+            else action_or_kind.parameters
+            if isinstance(action_or_kind.parameters, Mapping)
+            else {}
+        )
         return action_or_kind.action_kind, params
     return str(action_or_kind), {}
 
@@ -108,7 +114,7 @@ def _structured_expert_guidance_class(raw_discoveries: Mapping[str, Any]) -> str
             continue
         guidance = normalize_structured_expert_guidance_class(value.get("guidance_class"))
         if guidance is not None:
-            return guidance
+            return guidance.value
     return None
 
 
@@ -120,7 +126,7 @@ def _candidate_shortlist_top_family(raw_discoveries: Mapping[str, Any]) -> str |
         if not isinstance(item, Mapping):
             continue
         family = item.get("candidate_family")
-        if isinstance(family, str) and family in ASSAY_ROUTE_FAMILIES:
+        if isinstance(family, str) and family in {family.value for family in InterventionFamily}:
             return family
     return None
 
@@ -471,7 +477,8 @@ class StepRewardEngine:
         if getattr(action, "action_kind", "") != "ask_expert":
             return 0.0
 
-        expert_id = getattr(action, "expert_id", None)
+        _, params = _action_kind_and_params(action)
+        expert_id = str(params.get("expert_id", "") or "")
         d = _discoveries(state)
         evidence_count = milestone_count(d)
 

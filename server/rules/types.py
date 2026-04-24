@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from models import ActionKind
 
 class RuleSeverity(str, Enum):
     NONE = "none"
@@ -23,7 +24,7 @@ class RuleDecision(BaseModel):
 
     missing_prerequisites: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
-    suggested_next_actions: list[str] = Field(default_factory=list)
+    suggested_next_actions: list[ActionKind] = Field(default_factory=list)
 
     def as_observation_messages(self) -> list[str]:
         messages: list[str] = []

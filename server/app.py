@@ -7,9 +7,10 @@ import time
 
 from fastapi import Request
 from openenv.core.env_server import create_fastapi_app
+from pydantic import BaseModel, ConfigDict
 import uvicorn
 
-from models import BioMedAction, BioMedObservation
+from models import BioMedAction, BioMedObservation, BioMedVisibleState
 from server.bioMed_environment import BioMedEnvironment
 
 
@@ -117,12 +118,88 @@ def environment_factory() -> BioMedEnvironment:
     return http_sessions.get_or_create(session_id)
 
 
+class ResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    seed: int | None = None
+    scenario_family: str | None = None
+    difficulty: str | None = None
+
+
+class StepResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    observation: BioMedObservation
+    reward: float | None = None
+    done: bool
+
+
 app = create_fastapi_app(
     environment_factory,
     BioMedAction,
     BioMedObservation,
     max_concurrent_envs=4,
 )
+
+app.router.routes = [
+    route
+    for route in app.router.routes
+    if getattr(route, "path", None) not in {"/reset", "/step", "/schema", "/state"}
+]
+
+
+@app.get(
+    "/schema",
+    tags=["Schema"],
+    summary="Get canonical BioMed schemas",
+)
+async def get_canonical_schemas() -> dict[str, object]:
+    return {
+        "action": BioMedAction.model_json_schema(),
+        "observation": BioMedObservation.model_json_schema(),
+        "state": BioMedVisibleState.model_json_schema(),
+    }
+
+
+@app.post(
+    "/reset",
+    response_model=StepResponse,
+    tags=["Environment Control"],
+    summary="Reset the canonical BioMed environment",
+)
+async def reset_environment(request: ResetRequest) -> StepResponse:
+    env = environment_factory()
+    observation = env.reset(
+        seed=request.seed,
+        scenario_family=request.scenario_family,
+        difficulty=request.difficulty,
+    )
+    return StepResponse(observation=observation, reward=None, done=bool(observation.done))
+
+
+@app.post(
+    "/step",
+    response_model=StepResponse,
+    tags=["Environment Control"],
+    summary="Step the canonical BioMed environment",
+)
+async def step_environment(action: BioMedAction) -> StepResponse:
+    result = environment_factory().step(action)
+    return StepResponse(
+        observation=result.observation,
+        reward=result.reward,
+        done=result.done,
+    )
+
+
+@app.get(
+    "/state",
+    response_model=BioMedVisibleState,
+    tags=["State Management"],
+    summary="Get canonical BioMed state",
+)
+async def get_canonical_state() -> BioMedVisibleState:
+    return environment_factory().state
 
 
 @app.middleware("http")

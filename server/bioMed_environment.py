@@ -4,13 +4,18 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-from common.terminal_labels import completed_canonical_milestones
-from models import BioMedAction, BioMedObservation, BioMedVisibleState
+from models import (
+    ActionKind,
+    BioMedAction,
+    BioMedObservation,
+    BioMedVisibleState,
+    FinalRecommendationParams,
+)
 from server.rewards import RewardComputer
 from server.rules import RuleEngine
 from server.simulator.observation_builder import BioMedObservationBuilder
 from server.simulator.transition import BioMedTransitionEngine
-from server.tasks.scenarios import sample_episode_latent_state
+from server.simulator.scenarios import sample_episode_latent_state
 
 
 @dataclass
@@ -54,26 +59,30 @@ class BioMedEnvironment:
             raise RuntimeError("Call reset() before accessing episode state.")
         return self._latent
 
-    def _legal_next_actions(self, latent: Any) -> list[str]:
+    def _legal_next_actions(self, latent: Any) -> list[ActionKind]:
         return self.rule_engine.get_legal_next_actions(latent)
 
     def _build_visible_state(self, latent: Any) -> BioMedVisibleState:
         return BioMedVisibleState(
             episode_id=self._episode_id or "",
             step_count=latent.step_count,
-            scenario_family=latent.scenario_family,
-            difficulty=latent.difficulty,
             stage=latent.stage,
             spent_budget=latent.budget_spent,
             spent_time_days=latent.time_spent_days,
-            completed_milestones=completed_canonical_milestones(latent.completed_milestones),
+            completed_milestones=list(latent.completed_milestones),
             history_length=len(latent.history),
         )
 
     def _extract_recommendation(self, action: BioMedAction) -> dict[str, Any]:
-        parameters = action.parameters or {}
-        recommendation = parameters.get("recommendation", {})
-        return recommendation if isinstance(recommendation, dict) else {}
+        if action.action_kind != ActionKind.FINALIZE_RECOMMENDATION:
+            return {}
+        parameters = action.parameters
+        if isinstance(parameters, FinalRecommendationParams):
+            payload = parameters.model_dump(mode="json")
+            if action.confidence is not None:
+                payload["confidence"] = action.confidence
+            return payload
+        return {}
 
     def _make_step_result(
         self,
@@ -102,19 +111,6 @@ class BioMedEnvironment:
         action: BioMedAction,
         rule_result: Any,
     ) -> LocalStepResult:
-        latent.progress.advance_step()
-        latent.append_history(
-            action_kind=action.action_kind,
-            summary=f"Blocked action: {'; '.join(rule_result.hard_messages)}",
-            budget_delta=0.0,
-            time_delta_days=0,
-            metadata={
-                "blocked": True,
-                "hard_violations": list(rule_result.hard_messages),
-                "soft_violations": list(rule_result.soft_messages),
-            },
-        )
-
         reward_breakdown = self.reward_computer.invalid_action_penalty(rule_result)
         observation = self.observation_builder.build_invalid_action_observation(
             latent=latent,
@@ -217,6 +213,32 @@ class BioMedEnvironment:
     def close(self) -> None:
         self._latent = None
         self._episode_id = None
+
+    def truth_summary(self) -> dict[str, Any]:
+        latent = self._require_latent()
+        substrate_truth = getattr(latent, "substrate_truth", None)
+        catalyst_truth = getattr(latent, "catalyst_truth", None)
+        assay_noise = getattr(latent, "assay_noise", None)
+
+        from models import infer_true_bottleneck, infer_true_family
+
+        best_family = str(getattr(catalyst_truth, "best_intervention_family", "") or "")
+        return {
+            "true_bottleneck": infer_true_bottleneck(
+                best_intervention_family=infer_true_family(best_family),
+                thermostability_bottleneck=bool(
+                    getattr(catalyst_truth, "thermostability_bottleneck", False)
+                ),
+                synergy_required=bool(getattr(catalyst_truth, "synergy_required", False)),
+                contamination_band=str(getattr(substrate_truth, "contamination_band", "") or ""),
+                artifact_risk=float(getattr(assay_noise, "artifact_risk", 0.0) or 0.0),
+                crystallinity_band=str(getattr(substrate_truth, "crystallinity_band", "") or ""),
+                pretreatment_sensitivity=str(
+                    getattr(substrate_truth, "pretreatment_sensitivity", "") or ""
+                ),
+            ).value,
+            "best_intervention_family": infer_true_family(best_family).value,
+        }
 
     # -----------------------------
     # Async wrappers

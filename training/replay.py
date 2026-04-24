@@ -10,6 +10,17 @@ def _fmt(value: float) -> str:
     return f"{value:.4f}"
 
 
+def _legal_action_labels(legal_next_actions: list[dict[str, object]]) -> list[str]:
+    labels: list[str] = []
+    for item in legal_next_actions:
+        if not isinstance(item, dict):
+            continue
+        action_kind = item.get("action_kind")
+        if action_kind:
+            labels.append(str(action_kind))
+    return labels
+
+
 def render_trajectory_markdown(trajectory: Trajectory, *, show_hidden_truth: bool = False) -> str:
     lines: list[str] = []
     lines.append(f"# BioMed Replay — {trajectory.episode_id}")
@@ -38,8 +49,9 @@ def render_trajectory_markdown(trajectory: Trajectory, *, show_hidden_truth: boo
         lines.append(f"- **Reward:** `{_fmt(step.reward)}`")
         lines.append(f"- **Done:** `{step.done}`")
 
-        if step.legal_next_actions:
-            lines.append(f"- **Legal next actions:** `{', '.join(step.legal_next_actions)}`")
+        legal_labels = _legal_action_labels(step.legal_next_actions)
+        if legal_labels:
+            lines.append(f"- **Legal next actions:** `{', '.join(legal_labels)}`")
 
         if step.warnings:
             lines.append("- **Warnings:**")
@@ -66,9 +78,18 @@ def render_trajectory_markdown(trajectory: Trajectory, *, show_hidden_truth: boo
         obs = step.observation or {}
         if obs:
             lines.append("- **Observation excerpt:**")
-            for field_name in ("stage", "task_summary", "budget_remaining", "time_remaining_days"):
-                if field_name in obs:
-                    lines.append(f"  - `{field_name}`: `{obs[field_name]}`")
+            if "stage" in obs:
+                lines.append(f"  - `stage`: `{obs['stage']}`")
+            if "task_summary" in obs:
+                lines.append(f"  - `task_summary`: `{obs['task_summary']}`")
+            resources = obs.get("resources", {})
+            if isinstance(resources, dict):
+                if "budget_remaining" in resources:
+                    lines.append(f"  - `budget_remaining`: `{resources['budget_remaining']}`")
+                if "time_remaining_days" in resources:
+                    lines.append(
+                        f"  - `time_remaining_days`: `{resources['time_remaining_days']}`"
+                    )
 
         if step.visible_state:
             lines.append("- **Visible state:**")

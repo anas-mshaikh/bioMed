@@ -1,6 +1,6 @@
 from server.simulator.observation_builder import BioMedObservationBuilder, ObservationBundle
 from server.simulator.transition import BioMedTransitionEngine, TransitionEffect, TransitionResult
-from server.simulator.latent_state import LatentEpisodeState
+from server.simulator.latent_models import LatentEpisodeState
 
 __all__ = [
     "BioMedObservationBuilder",

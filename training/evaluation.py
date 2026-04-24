@@ -7,10 +7,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from common.benchmark_contract import ACTION_KIND_VALUES, BENCHMARK_METRIC_KEYS, ONLINE_METRIC_KEYS, PRIVATE_TRUTH_METADATA_KEYS
-from common.terminal_labels import (
-    BOTTLENECK_ALIASES,
-    FAMILY_ALIASES,
+from models import (
+    ACTION_KIND_VALUES,
+    BENCHMARK_METRIC_KEYS,
+    ONLINE_METRIC_KEYS,
+    PRIVATE_TRUTH_METADATA_KEYS,
     infer_true_bottleneck,
     infer_true_family,
     recommendation_has_explicit_no_go_semantics,
@@ -81,9 +82,7 @@ def _last_recommendation(traj: Trajectory) -> dict[str, Any]:
         if action.get("action_kind") == "finalize_recommendation":
             params = action.get("parameters", {})
             if isinstance(params, dict):
-                recommendation = params.get("recommendation", {})
-                if isinstance(recommendation, dict):
-                    return recommendation
+                return params
     return {}
 
 
@@ -149,10 +148,10 @@ def _expert_hint_was_followed(traj: Trajectory, idx: int, hint: str | None) -> b
     future_actions = [str(step.action.get("action_kind", "")) for step in traj.steps[idx + 1 :]]
     recommendation = _last_recommendation(traj)
     recommended_family = str(recommendation.get("recommended_family", "") or "").lower()
-    decision = str(recommendation.get("decision", "") or "").lower()
+    decision = str(recommendation.get("decision_type", "") or "").lower()
 
     if hint == "no_go":
-        return recommended_family == "no_go" or decision in {"stop", "no_go", "halt"}
+        return recommended_family == "no_go" or decision == "no_go"
     if hint == "cocktail":
         return "test_cocktail" in future_actions or recommended_family == "cocktail"
     if hint == "pretreat_then_single":
@@ -176,19 +175,17 @@ def _expert_hint_was_followed(traj: Trajectory, idx: int, hint: str | None) -> b
 
 def _extract_predicted_bottleneck(traj: Trajectory) -> str | None:
     rec = _last_recommendation(traj)
-    for key in ("primary_bottleneck", "bottleneck", "diagnosis"):
-        value = rec.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip().lower()
+    value = rec.get("bottleneck")
+    if isinstance(value, str) and value.strip():
+        return value.strip().lower()
     return None
 
 
 def _extract_predicted_family(traj: Trajectory) -> str | None:
     rec = _last_recommendation(traj)
-    for key in ("recommended_family", "intervention_family", "strategy_family"):
-        value = rec.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip().lower()
+    value = rec.get("recommended_family")
+    if isinstance(value, str) and value.strip():
+        return value.strip().lower()
     return None
 
 
@@ -201,22 +198,10 @@ def _extract_predicted_stop(traj: Trajectory) -> bool | None:
     return None
 
 
-def _alias_match(predicted: str | None, truth: str | None, alias_map: dict[str, set[str]]) -> float:
+def _alias_match(predicted: str | None, truth: str | None) -> float:
     if not predicted or not truth:
         return 0.0
-    predicted = predicted.lower()
-    truth = truth.lower()
-    truth_aliases = alias_map.get(truth, {truth})
-    if predicted in truth_aliases:
-        return 1.0
-    pred_tokens = set(predicted.replace("-", "_").split("_"))
-    truth_tokens: set[str] = set()
-    for alias in truth_aliases:
-        truth_tokens.update(alias.replace("-", "_").split("_"))
-    overlap = len(pred_tokens & truth_tokens)
-    if overlap > 0:
-        return min(0.70, 0.35 + 0.15 * overlap)
-    return 0.0
+    return 1.0 if predicted.lower() == truth.lower() else 0.0
 
 
 def extract_truth_summary_from_latent(latent: Any) -> dict[str, Any]:
@@ -259,12 +244,10 @@ def classify_success(traj: Trajectory, truth_summary: dict[str, Any] | None = No
     bottleneck_match = _alias_match(
         _extract_predicted_bottleneck(traj),
         (truth_summary or _truth_summary(traj)).get("true_bottleneck"),
-        BOTTLENECK_ALIASES,
     )
     family_match = _alias_match(
         _extract_predicted_family(traj),
         (truth_summary or _truth_summary(traj)).get("best_intervention_family"),
-        FAMILY_ALIASES,
     )
     truth_family = (truth_summary or _truth_summary(traj)).get("best_intervention_family")
     stop_match = 0.0
@@ -389,14 +372,12 @@ class BioMedEvaluationSuite:
                 _alias_match(
                     _extract_predicted_bottleneck(traj),
                     truth.get("true_bottleneck"),
-                    BOTTLENECK_ALIASES,
                 )
             )
             family_scores.append(
                 _alias_match(
                     _extract_predicted_family(traj),
                     truth.get("best_intervention_family"),
-                    FAMILY_ALIASES,
                 )
             )
 

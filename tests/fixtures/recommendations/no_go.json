@@ -1,8 +1,0 @@
-{
-  "primary_bottleneck": "no_go",
-  "recommended_family": "no_go",
-  "decision": "stop",
-  "continue_exploration": false,
-  "confidence": 0.82,
-  "rationale": "The evidence does not justify continued spend."
-}

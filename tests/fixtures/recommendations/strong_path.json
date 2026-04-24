@@ -1,8 +1,0 @@
-{
-  "primary_bottleneck": "substrate_accessibility",
-  "recommended_family": "pretreat_then_single",
-  "decision": "proceed",
-  "continue_exploration": false,
-  "confidence": 0.71,
-  "rationale": "Pretreatment plus a single thermostable route is best supported."
-}

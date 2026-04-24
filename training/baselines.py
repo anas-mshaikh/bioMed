@@ -5,13 +5,27 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any
 
-from common.benchmark_contract import ACTION_COSTS
-from common.terminal_labels import (
-    ASSAY_ROUTE_FAMILIES,
+from models import (
+    ACTION_COSTS,
+    ActionKind,
+    BioMedAction,
+    BottleneckKind,
+    DecisionType,
+    ExpertId,
+    ExpertQueryParams,
+    FinalRecommendationParams,
+    HydrolysisAssayParams,
+    HypothesisParams,
+    InterventionFamily,
     structured_expert_guidance_from_observation,
     terminal_recommendation_rationale,
 )
-from models import BioMedAction
+
+ASSAY_ROUTE_FAMILIES = {
+    InterventionFamily.PRETREAT_THEN_SINGLE.value,
+    InterventionFamily.THERMOSTABLE_SINGLE.value,
+    InterventionFamily.COCKTAIL.value,
+}
 
 
 def _obs_get(obj: Any, name: str, default: Any = None) -> Any:
@@ -35,10 +49,6 @@ def _observation_text(observation: Any) -> str:
     latest_output = _obs_get(observation, "latest_output")
     if latest_output is not None:
         parts.append(str(latest_output))
-    latest_outputs = _obs_get(observation, "latest_outputs", [])
-    if isinstance(latest_outputs, list):
-        for item in latest_outputs:
-            parts.append(str(item))
     artifacts = _obs_get(observation, "artifacts", [])
     if isinstance(artifacts, list):
         for item in artifacts:
@@ -239,7 +249,15 @@ def _extract_signals(observation: Any, trajectory: Any) -> dict[str, Any]:
 def _legal_actions(observation: Any) -> list[str]:
     legal = _obs_get(observation, "legal_next_actions", [])
     if isinstance(legal, list):
-        return [str(x) for x in legal]
+        normalized: list[str] = []
+        for item in legal:
+            if hasattr(item, "action_kind"):
+                normalized.append(str(getattr(item, "action_kind")))
+            elif isinstance(item, dict) and "action_kind" in item:
+                normalized.append(str(item["action_kind"]))
+            else:
+                normalized.append(str(item))
+        return normalized
     return []
 
 
@@ -423,13 +441,13 @@ def _default_recommendation(observation: Any, trajectory: Any) -> dict[str, Any]
 
     family = signals["top_route"]
     bottleneck = "candidate_mismatch"
-    decision = "proceed"
+    decision_type = DecisionType.PROCEED.value
     continue_exploration = False
 
     if signals["expert_guidance_class"] == "no_go" or _has_economic_no_go_evidence(signals, context):
         family = "no_go"
         bottleneck = "no_go"
-        decision = "stop"
+        decision_type = DecisionType.NO_GO.value
     elif signals["contamination_signal"]:
         family = (
             signals["expert_guidance_class"]
@@ -437,7 +455,7 @@ def _default_recommendation(observation: Any, trajectory: Any) -> dict[str, Any]
             else signals["top_route"]
         )
         bottleneck = "contamination_artifact"
-        decision = "proceed"
+        decision_type = DecisionType.PROCEED.value
     elif signals["cocktail_strong"]:
         family = "cocktail"
         bottleneck = "cocktail_synergy"
@@ -461,7 +479,7 @@ def _default_recommendation(observation: Any, trajectory: Any) -> dict[str, Any]
     elif "contamination" in hypothesis_text or "artifact" in hypothesis_text:
         family = "no_go"
         bottleneck = "no_go"
-        decision = "stop"
+        decision_type = DecisionType.NO_GO.value
     elif "synergy" in hypothesis_text or "cocktail" in hypothesis_text:
         family = "cocktail"
         bottleneck = "cocktail_synergy"
@@ -476,13 +494,25 @@ def _default_recommendation(observation: Any, trajectory: Any) -> dict[str, Any]
     if family == "no_go" and _has_economic_no_go_evidence(signals, context):
         confidence = 0.78
 
+    evidence_artifact_ids = [
+        str(item.get("artifact_id"))
+        for item in _artifact_cards(observation)
+        if item.get("artifact_id")
+    ]
+    if not evidence_artifact_ids:
+        evidence_artifact_ids = ["observation:latest"]
+
     return {
-        "primary_bottleneck": bottleneck,
+        "bottleneck": bottleneck,
         "recommended_family": family,
-        "decision": decision,
+        "decision_type": decision_type,
+        "summary": terminal_recommendation_rationale(
+            BottleneckKind(bottleneck),
+            InterventionFamily(family),
+        ),
+        "evidence_artifact_ids": evidence_artifact_ids,
         "continue_exploration": continue_exploration,
         "confidence": confidence,
-        "rationale": terminal_recommendation_rationale(bottleneck, family),
     }
 
 
@@ -505,19 +535,26 @@ def _choose_expert(observation: Any, trajectory: Any) -> str:
 def _build_action(action_kind: str, observation: Any, trajectory: Any) -> BioMedAction:
     if action_kind == "ask_expert":
         return BioMedAction(
-            action_kind=action_kind,
-            expert_id=_choose_expert(observation, trajectory),
-            parameters={},
+            action_kind=ActionKind(action_kind),
+            parameters=ExpertQueryParams(expert_id=ExpertId(_choose_expert(observation, trajectory))),
         )
     if action_kind == "state_hypothesis":
         return BioMedAction(
-            action_kind=action_kind,
-            parameters={"hypothesis": _default_hypothesis(observation, trajectory)},
+            action_kind=ActionKind(action_kind),
+            parameters=HypothesisParams(hypothesis=_default_hypothesis(observation, trajectory)),
         )
     if action_kind == "finalize_recommendation":
+        recommendation = _default_recommendation(observation, trajectory)
         return BioMedAction(
-            action_kind=action_kind,
-            parameters={"recommendation": _default_recommendation(observation, trajectory)},
+            action_kind=ActionKind(action_kind),
+            parameters=FinalRecommendationParams(
+                bottleneck=BottleneckKind(recommendation["bottleneck"]),
+                recommended_family=InterventionFamily(recommendation["recommended_family"]),
+                decision_type=DecisionType(recommendation["decision_type"]),
+                summary=str(recommendation["summary"]),
+                evidence_artifact_ids=list(recommendation["evidence_artifact_ids"]),
+            ),
+            confidence=float(recommendation.get("confidence", 0.0) or 0.0),
         )
     if action_kind == "run_hydrolysis_assay":
         signals = _extract_signals(observation, trajectory)
@@ -528,13 +565,13 @@ def _build_action(action_kind: str, observation: Any, trajectory: Any) -> BioMed
             signals["pretreatment_promising"] or signals["crystallinity_high"]
         )
         return BioMedAction(
-            action_kind=action_kind,
-            parameters={
-                "candidate_family": route,
-                "pretreated": pretreated,
-            },
+            action_kind=ActionKind(action_kind),
+            parameters=HydrolysisAssayParams(
+                candidate_family=InterventionFamily(route),
+                pretreated=pretreated,
+            ),
         )
-    return BioMedAction(action_kind=action_kind, parameters={})
+    return BioMedAction(action_kind=ActionKind(action_kind))
 
 
 class BasePolicy(ABC):
@@ -708,7 +745,7 @@ class CostAwareHeuristicPolicy(BasePolicy):
         cheap_actions = [
             action
             for action in legal
-            if float(ACTION_COSTS.get(action, {}).get("budget", 0.0)) <= 5.0
+            if float(ACTION_COSTS.get(ActionKind(action), {}).get("budget", 0.0)) <= 5.0
         ]
 
         ordered_cheap = [
@@ -837,3 +874,6 @@ def build_policy(name: str) -> BasePolicy:
     if name not in registry:
         raise ValueError(f"Unknown policy '{name}'. Valid options: {', '.join(sorted(registry))}")
     return registry[name]()
+
+
+RandomPolicy = RandomLegalPolicy

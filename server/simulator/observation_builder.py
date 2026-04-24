@@ -3,17 +3,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from common.benchmark_contract import ACTION_KIND_VALUES, FORBIDDEN_PUBLIC_DATA_KEYS
-from common.terminal_labels import completed_canonical_milestones
 from models import (
+    FORBIDDEN_PUBLIC_DATA_KEYS,
+    ActionKind,
     ArtifactCard,
     BioMedObservation,
     BioMedVisibleState,
+    EpisodeInfo,
     ExpertMessage,
     LatestOutput,
+    ResourceSnapshot,
+    action_specs,
+    completed_canonical_milestones,
 )
 from server.rules.types import RuleDecision
-from server.simulator.latent_state import LatentEpisodeState
+from server.simulator.latent_models import LatentEpisodeState
 from server.simulator.transition import (
     TransitionArtifact,
     TransitionEffect,
@@ -64,21 +68,20 @@ def _sanitize_public_payload(value: Any) -> Any:
     return value
 
 
-def _validate_legal_actions(legal_next_actions: list[str] | None) -> list[str]:
+def _validate_legal_actions(legal_next_actions: list[ActionKind] | None) -> list[ActionKind]:
     if legal_next_actions is None:
         return []
     if not isinstance(legal_next_actions, list):
-        raise TypeError(
-            f"legal_next_actions must be a list[str] or None, got {type(legal_next_actions).__name__}"
-        )
+        raise TypeError("legal_next_actions must be a list[ActionKind] or None")
 
-    validated: list[str] = []
+    validated: list[ActionKind] = []
     for item in legal_next_actions:
-        if not isinstance(item, str):
-            raise TypeError(f"legal_next_actions must contain strings, got {type(item).__name__}")
-        if item not in ACTION_KIND_VALUES:
-            raise ValueError(f"Unknown action in legal_next_actions: {item!r}")
-        validated.append(item)
+        if isinstance(item, ActionKind):
+            validated.append(item)
+        elif isinstance(item, str):
+            validated.append(ActionKind(item))
+        else:
+            raise TypeError(f"legal_next_actions must contain action kinds, got {type(item).__name__}")
 
     return validated
 
@@ -131,20 +134,14 @@ def _build_visible_state(state: LatentEpisodeState) -> BioMedVisibleState:
 
     This intentionally contains only visible episode metadata, never hidden truth.
     """
-    common_fields: dict[str, Any] = {
-        "episode_id": state.episode_id,
-        "step_count": state.step_count,
-    }
-
     return BioMedVisibleState(
-        scenario_family=state.scenario_family,
-        difficulty=state.difficulty,
+        episode_id=state.episode_id,
+        step_count=state.step_count,
         stage=state.progress.stage,
         spent_budget=round(state.resources.budget_spent, 2),
         spent_time_days=state.resources.time_spent_days,
         completed_milestones=completed_canonical_milestones(state.progress.completed_milestones),
         history_length=len(state.history),
-        **common_fields,
     )
 
 
@@ -190,17 +187,20 @@ def _build_invalid_action_observation(
     state: LatentEpisodeState,
     *,
     decision: RuleDecision,
-    legal_next_actions: list[str],
+    legal_next_actions: list[ActionKind],
 ) -> BioMedObservation:
     return BioMedObservation(
+        episode=EpisodeInfo(episode_id=state.episode_id, step_count=state.step_count),
         task_summary=_public_task_summary(state),
         stage=_stage_label(state),
+        resources=ResourceSnapshot(
+            budget_remaining=round(state.resources.budget_remaining, 2),
+            time_remaining_days=state.resources.time_remaining_days,
+        ),
         latest_output=None,
         artifacts=_sort_artifacts(_build_artifacts_from_discoveries(state)),
         expert_inbox=_build_expert_inbox_from_discoveries(state),
-        budget_remaining=round(state.resources.budget_remaining, 2),
-        time_remaining_days=state.resources.time_remaining_days,
-        legal_next_actions=legal_next_actions,
+        legal_next_actions=action_specs(legal_next_actions),
         warnings=decision.as_observation_messages(),
         done_reason=state.done_reason if state.done else None,
     )
@@ -544,27 +544,26 @@ class BioMedObservationBuilder:
         self,
         state: LatentEpisodeState,
         *,
-        legal_next_actions: list[str] | None = None,
+        legal_next_actions: list[ActionKind] | None = None,
         task_summary: str | None = None,
     ) -> ObservationBundle:
         validated_actions = _validate_legal_actions(legal_next_actions)
         visible_state = _build_visible_state(state)
 
         observation = BioMedObservation(
+            episode=EpisodeInfo(episode_id=state.episode_id, step_count=state.step_count),
             task_summary=task_summary or _public_task_summary(state),
             stage=_stage_label(state),
+            resources=ResourceSnapshot(
+                budget_remaining=round(state.resources.budget_remaining, 2),
+                time_remaining_days=state.resources.time_remaining_days,
+            ),
             latest_output=None,
             artifacts=_sort_artifacts(_build_artifacts_from_discoveries(state)),
             expert_inbox=_build_expert_inbox_from_discoveries(state),
-            budget_remaining=round(state.resources.budget_remaining, 2),
-            time_remaining_days=state.resources.time_remaining_days,
-            legal_next_actions=validated_actions,
+            legal_next_actions=action_specs(validated_actions),
             warnings=[],
             done_reason=state.done_reason,
-            metadata={
-                "episode_id": state.episode_id,
-                "difficulty": state.difficulty,
-            },
         )
         return ObservationBundle(observation=observation, visible_state=visible_state)
 
@@ -573,7 +572,7 @@ class BioMedObservationBuilder:
         state: LatentEpisodeState,
         effect: TransitionEffect,
         *,
-        legal_next_actions: list[str] | None = None,
+        legal_next_actions: list[ActionKind] | None = None,
         task_summary: str | None = None,
         extra_warnings: list[str] | None = None,
     ) -> ObservationBundle:
@@ -601,21 +600,19 @@ class BioMedObservationBuilder:
         warnings.extend(_build_terminal_warnings(state))
 
         observation = BioMedObservation(
+            episode=EpisodeInfo(episode_id=state.episode_id, step_count=state.step_count),
             task_summary=task_summary or _public_task_summary(state),
             stage=_stage_label(state),
+            resources=ResourceSnapshot(
+                budget_remaining=round(state.resources.budget_remaining, 2),
+                time_remaining_days=state.resources.time_remaining_days,
+            ),
             latest_output=_build_latest_output(effect),
             artifacts=artifacts,
             expert_inbox=list(expert_map.values()),
-            budget_remaining=round(state.resources.budget_remaining, 2),
-            time_remaining_days=state.resources.time_remaining_days,
-            legal_next_actions=validated_actions,
+            legal_next_actions=action_specs(validated_actions),
             warnings=warnings,
             done_reason=state.done_reason,
-            metadata={
-                "episode_id": state.episode_id,
-                "difficulty": state.difficulty,
-                "latest_effect_type": effect.effect_type,
-            },
         )
         return ObservationBundle(observation=observation, visible_state=visible_state)
 
@@ -624,7 +621,7 @@ class BioMedObservationBuilder:
         *,
         latent: LatentEpisodeState,
         decision: RuleDecision,
-        legal_next_actions: list[str],
+        legal_next_actions: list[ActionKind],
     ) -> BioMedObservation:
         return _build_invalid_action_observation(
             latent,

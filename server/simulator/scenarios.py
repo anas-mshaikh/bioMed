@@ -5,7 +5,7 @@ from random import Random
 from typing import Literal, TypeVar
 from uuid import NAMESPACE_URL, uuid5
 
-from server.simulator.latent_state import (
+from server.simulator.latent_models import (
     ExperimentProgress,
     LatentAssayNoise,
     LatentEpisodeState,

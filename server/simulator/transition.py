@@ -2,30 +2,26 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
-from common.benchmark_contract import ACTION_COSTS
-from common.terminal_labels import ASSAY_ROUTE_FAMILIES
-from models import BioMedAction
-from server.simulator.latent_state import LatentEpisodeState
+from models import (
+    ArtifactType,
+    BioMedAction,
+    ExpertId,
+    InterventionFamily,
+    OutputType,
+    Priority,
+    action_cost,
+)
+from server.simulator.latent_models import LatentEpisodeState
 
-
-TransitionEffectType = Literal[
-    "blocked",
-    "failure",
-    "inspection",
-    "literature",
-    "candidate_registry",
-    "assay",
-    "expert_reply",
-    "decision",
-]
+TransitionEffectType = OutputType
 
 
 @dataclass
 class TransitionArtifact:
     artifact_id: str
-    artifact_type: str
+    artifact_type: ArtifactType
     title: str
     summary: str
     data: dict[str, Any] = field(default_factory=dict)
@@ -33,10 +29,10 @@ class TransitionArtifact:
 
 @dataclass
 class TransitionExpertReply:
-    expert_id: str
+    expert_id: ExpertId
     summary: str
     confidence: float | None = None
-    priority: str = "medium"
+    priority: Priority = Priority.MEDIUM
     data: dict[str, Any] = field(default_factory=dict)
 
 
@@ -80,21 +76,8 @@ class TransitionResult:
     internal_flags: dict[str, Any] = field(default_factory=dict)
 
 
-ACTION_RESOURCE_COSTS: dict[str, tuple[float, int]] = {
-    action_kind: (float(costs["budget"]), int(costs["time_days"]))
-    for action_kind, costs in ACTION_COSTS.items()
-}
-
-
 def compute_action_cost(action: BioMedAction) -> tuple[float, int]:
-    """
-    Return (budget_cost, time_cost_days) for a BioMed action.
-
-    Step 5 keeps this simple and deterministic. If you later add optional assay
-    variants or premium tools, you can refine this function without changing the
-    transition engine contract.
-    """
-    return ACTION_RESOURCE_COSTS.get(action.action_kind, (0.0, 0))
+    return action_cost(action.action_kind)
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -139,11 +122,21 @@ def _family_display_name(candidate_family: str) -> str:
     return display.get(candidate_family, candidate_family.replace("_", " ").title())
 
 
+def _param_mapping(action: BioMedAction) -> dict[str, Any]:
+    params = action.parameters
+    if hasattr(params, "model_dump"):
+        return params.model_dump(mode="json")
+    if isinstance(params, dict):
+        return dict(params)
+    return {}
+
+
 def _family_from_action(action: BioMedAction, state: LatentEpisodeState) -> str:
-    requested = action.parameters.get("candidate_family")
+    requested = _param_mapping(action).get("candidate_family")
     if (
         isinstance(requested, str)
-        and requested in ASSAY_ROUTE_FAMILIES
+        and requested
+        != InterventionFamily.NO_GO.value
         and requested in state.intervention_truth.candidate_family_scores
     ):
         return requested
@@ -151,18 +144,19 @@ def _family_from_action(action: BioMedAction, state: LatentEpisodeState) -> str:
 
 
 def _bool_param(action: BioMedAction, key: str, default: bool = False) -> bool:
-    value = action.parameters.get(key, default)
+    value = _param_mapping(action).get(key, default)
     return bool(value)
 
 
 def _string_param(action: BioMedAction, key: str, default: str = "") -> str:
-    value = action.parameters.get(key, default)
+    value = _param_mapping(action).get(key, default)
     return value if isinstance(value, str) else default
 
 
 def _expert_id(action: BioMedAction, default: str = "wet_lab_lead") -> str:
-    if isinstance(action.expert_id, str) and action.expert_id.strip():
-        return action.expert_id
+    explicit = _param_mapping(action).get("expert_id")
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit
     return _string_param(action, "expert_id", default=default)
 
 
@@ -552,7 +546,6 @@ class BioMedTransitionEngine:
             caveat_note = "Early controls and cleanup checks may save budget otherwise spent on misleading follow-up."
 
         literature_data = {
-            "scenario_family": family,
             "primary_note": primary_note,
             "caveat_note": caveat_note,
         }
@@ -1211,17 +1204,14 @@ class BioMedTransitionEngine:
         budget_delta: float,
         time_delta_days: int,
     ) -> TransitionEffect:
-        recommendation = action.parameters.get("recommendation", {})
-        if not isinstance(recommendation, dict):
-            recommendation = {}
-        proposed_intervention_family = str(recommendation.get("recommended_family", "unspecified"))
-        claimed_bottleneck = str(recommendation.get("primary_bottleneck", "unspecified"))
-        decision = str(recommendation.get("decision", "proceed"))
+        recommendation = _param_mapping(action)
+        recommended_family = str(recommendation.get("recommended_family", "unspecified"))
+        bottleneck = str(recommendation.get("bottleneck", "unspecified"))
+        decision_type = str(recommendation.get("decision_type", "proceed"))
         decision_summary = str(
-            recommendation.get("rationale")
-            or action.rationale.strip()
-            or "Program decision submitted."
+            recommendation.get("summary") or action.rationale.strip() or "Program decision submitted."
         )
+        evidence_artifact_ids = list(recommendation.get("evidence_artifact_ids", []))
 
         s.progress.stage = "decision"
         s.progress.final_decision_submitted = True
@@ -1229,10 +1219,11 @@ class BioMedTransitionEngine:
         s.progress.record_discovery(
             "final_decision",
             {
-                "proposed_intervention_family": proposed_intervention_family,
-                "claimed_bottleneck": claimed_bottleneck,
-                "decision": decision,
+                "recommended_family": recommended_family,
+                "bottleneck": bottleneck,
+                "decision_type": decision_type,
                 "decision_summary": decision_summary,
+                "evidence_artifact_ids": evidence_artifact_ids,
             },
         )
         s.progress.record_discovery("final_decision_submitted", True)
@@ -1243,9 +1234,9 @@ class BioMedTransitionEngine:
             budget_delta=budget_delta,
             time_delta_days=time_delta_days,
             metadata={
-                "proposed_intervention_family": proposed_intervention_family,
-                "claimed_bottleneck": claimed_bottleneck,
-                "decision": decision,
+                "recommended_family": recommended_family,
+                "bottleneck": bottleneck,
+                "decision_type": decision_type,
             },
         )
 
@@ -1261,17 +1252,19 @@ class BioMedTransitionEngine:
                     title="Program decision",
                     summary=decision_summary,
                     data={
-                        "proposed_intervention_family": proposed_intervention_family,
-                        "claimed_bottleneck": claimed_bottleneck,
-                        "decision": decision,
+                        "recommended_family": recommended_family,
+                        "bottleneck": bottleneck,
+                        "decision_type": decision_type,
+                        "evidence_artifact_ids": evidence_artifact_ids,
                     },
                 )
             ],
             data={
-                "proposed_intervention_family": proposed_intervention_family,
-                "claimed_bottleneck": claimed_bottleneck,
-                "decision": decision,
+                "recommended_family": recommended_family,
+                "bottleneck": bottleneck,
+                "decision_type": decision_type,
                 "decision_summary": decision_summary,
+                "evidence_artifact_ids": evidence_artifact_ids,
             },
             budget_delta=budget_delta,
             time_delta_days=time_delta_days,

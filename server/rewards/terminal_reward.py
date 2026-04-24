@@ -3,19 +3,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from models import (
+    infer_true_bottleneck,
+    infer_true_family,
+    milestone_count,
+    recommendation_has_explicit_go_semantics,
+    recommendation_has_explicit_no_go_semantics,
+    recommendation_has_explicit_stop_semantics,
+)
 from .reward_config import RewardConfig
 from .reward_types import RewardBreakdown
 from .shaping import ProgressPotential
-from common.terminal_labels import (
-    BOTTLENECK_ALIASES,
-    FAMILY_ALIASES,
-    infer_true_bottleneck,
-    infer_true_family,
-    recommendation_has_explicit_no_go_semantics,
-    milestone_count,
-    recommendation_has_explicit_go_semantics,
-    recommendation_has_explicit_stop_semantics,
-)
 
 
 def _clip(value: float, lower: float, upper: float) -> float:
@@ -75,12 +73,10 @@ class TerminalRewardEngine:
         bottleneck_score = self._set_match_score(
             predicted_bottleneck,
             true_bottleneck,
-            BOTTLENECK_ALIASES,
         )
         family_score = self._set_match_score(
             predicted_family,
             true_family,
-            FAMILY_ALIASES,
         )
         stop_go_score = self._stop_go_score(
             true_family,
@@ -137,14 +133,14 @@ class TerminalRewardEngine:
         artifact_risk = float(getattr(assay_noise, "artifact_risk", 0.0) or 0.0)
 
         return infer_true_bottleneck(
-            best_intervention_family=str(best_family or ""),
+            best_intervention_family=infer_true_family(str(best_family or "")),
             thermostability_bottleneck=thermo,
             synergy_required=synergy_required,
             contamination_band=contamination_band,
             artifact_risk=artifact_risk,
             crystallinity_band=crystallinity_band,
             pretreatment_sensitivity=pretreatment_sensitivity,
-        )
+        ).value
 
     def _true_intervention_family(self, state: object) -> str:
         catalyst_truth = getattr(state, "catalyst_truth", None)
@@ -152,17 +148,15 @@ class TerminalRewardEngine:
         return infer_true_family(family)
 
     def _predicted_bottleneck(self, recommendation: dict[str, Any]) -> str | None:
-        for key in ("primary_bottleneck", "bottleneck", "diagnosis"):
-            value = recommendation.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip().lower()
+        value = recommendation.get("bottleneck")
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower()
         return None
 
     def _predicted_family(self, recommendation: dict[str, Any]) -> str | None:
-        for key in ("recommended_family", "intervention_family", "strategy_family"):
-            value = recommendation.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip().lower()
+        value = recommendation.get("recommended_family")
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower()
         return None
 
     def _predicted_stop(self, recommendation: dict[str, Any]) -> bool | None:
@@ -183,28 +177,10 @@ class TerminalRewardEngine:
         self,
         predicted: str | None,
         truth: str,
-        alias_map: dict[str, set[str]],
     ) -> float:
         if not predicted:
             return 0.0
-
-        predicted_norm = predicted.strip().lower()
-        truth_aliases = alias_map.get(truth, {truth})
-
-        if predicted_norm in truth_aliases:
-            return 1.0
-
-        # partial semantic match via overlapping alias tokens
-        pred_tokens = set(predicted_norm.replace("-", "_").split("_"))
-        truth_tokens = set()
-        for alias in truth_aliases:
-            truth_tokens.update(alias.replace("-", "_").split("_"))
-
-        overlap = len(pred_tokens & truth_tokens)
-        if overlap > 0:
-            return min(0.70, 0.35 + 0.15 * overlap)
-
-        return 0.0
+        return 1.0 if predicted.strip().lower() == truth.strip().lower() else 0.0
 
     def _stop_go_score(
         self,

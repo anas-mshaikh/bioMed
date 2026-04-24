@@ -35,10 +35,13 @@ def _state_dict(env: Any) -> dict[str, Any] | None:
 
 
 def _latent_truth_summary(env: Any) -> dict[str, Any] | None:
-    latent = getattr(env, "_latent", None)
-    if latent is None:
+    reporter = getattr(env, "truth_summary", None)
+    if callable(reporter):
+        payload = reporter()
+        if isinstance(payload, dict):
+            return payload
         return None
-    return extract_truth_summary_from_latent(latent)
+    return None
 
 
 def _episode_id_from_state(state: dict[str, Any] | None, fallback: str) -> str:

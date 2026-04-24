@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
 
-from common.benchmark_contract import ACTION_COSTS, ACTION_KIND_VALUES, EXPERT_ID_VALUES
-from common.terminal_labels import ASSAY_ROUTE_FAMILIES, milestone_count
-from models import BioMedAction
-from server.simulator.latent_state import LatentEpisodeState
+from models import (
+    ACTION_COSTS,
+    ActionKind,
+    BioMedAction,
+    ExpertId,
+    ExpertQueryParams,
+    HydrolysisAssayParams,
+    milestone_count,
+)
+from server.simulator.latent_models import LatentEpisodeState
 from .types import RuleCheckResult, RuleDecision, RuleSeverity, RuleViolation
 
 
@@ -21,58 +26,57 @@ class RuleEngine:
     - never leak hidden truth
     """
 
-    _KNOWN_ACTIONS = frozenset(ACTION_KIND_VALUES)
+    _KNOWN_ACTIONS = frozenset(ActionKind)
 
-    _KNOWN_EXPERTS = frozenset(EXPERT_ID_VALUES)
+    _KNOWN_EXPERTS = frozenset(ExpertId)
 
-    def get_legal_next_actions(self, latent: LatentEpisodeState) -> list[str]:
+    def get_legal_next_actions(self, latent: LatentEpisodeState) -> list[ActionKind]:
         if latent.done:
             return []
 
         d = latent.discoveries
-        legal: list[str] = [
-            "inspect_feedstock",
-            "query_literature",
-            "query_candidate_registry",
-            "ask_expert",
-            "state_hypothesis",
-            "finalize_recommendation",
+        legal: list[ActionKind] = [
+            ActionKind.INSPECT_FEEDSTOCK,
+            ActionKind.QUERY_LITERATURE,
+            ActionKind.QUERY_CANDIDATE_REGISTRY,
+            ActionKind.ASK_EXPERT,
+            ActionKind.STATE_HYPOTHESIS,
+            ActionKind.FINALIZE_RECOMMENDATION,
         ]
 
         if d.get("feedstock_inspected", False):
             legal.extend(
                 [
-                    "measure_crystallinity",
-                    "measure_contamination",
-                    "estimate_particle_size",
+                    ActionKind.MEASURE_CRYSTALLINITY,
+                    ActionKind.MEASURE_CONTAMINATION,
+                    ActionKind.ESTIMATE_PARTICLE_SIZE,
                 ]
             )
 
         if d.get("candidate_registry_queried", False):
             legal.extend(
                 [
-                    "estimate_stability_signal",
-                    "run_thermostability_assay",
+                    ActionKind.ESTIMATE_STABILITY_SIGNAL,
+                    ActionKind.RUN_THERMOSTABILITY_ASSAY,
                 ]
             )
 
         if d.get("feedstock_inspected", False) or d.get("candidate_registry_queried", False):
-            legal.append("run_hydrolysis_assay")
+            legal.append(ActionKind.RUN_HYDROLYSIS_ASSAY)
 
         if d.get("activity_assay_run", False):
             legal.extend(
                 [
-                    "test_pretreatment",
-                    "state_hypothesis",
+                    ActionKind.TEST_PRETREATMENT,
+                    ActionKind.STATE_HYPOTHESIS,
                 ]
             )
 
         if d.get("candidate_registry_queried", False) and d.get("activity_assay_run", False):
-            legal.append("test_cocktail")
+            legal.append(ActionKind.TEST_COCKTAIL)
 
-        # preserve order, remove duplicates
-        seen: set[str] = set()
-        ordered: list[str] = []
+        seen: set[ActionKind] = set()
+        ordered: list[ActionKind] = []
         for action in legal:
             if action not in seen:
                 seen.add(action)
@@ -86,11 +90,6 @@ class RuleEngine:
     ) -> RuleCheckResult:
         hard: list[RuleViolation] = []
         soft: list[RuleViolation] = []
-
-        schema_hard = self._check_schema_requirements(action)
-        if schema_hard is not None:
-            hard.append(schema_hard)
-            return self._build_result(latent, hard, soft)
 
         terminal_hard = self._check_terminal_state(latent)
         if terminal_hard is not None:
@@ -166,60 +165,6 @@ class RuleEngine:
             soft_violations=[],
         )
 
-    def _check_schema_requirements(self, action: BioMedAction) -> RuleViolation | None:
-        if action.action_kind not in self._KNOWN_ACTIONS:
-            return RuleViolation(
-                rule_code="UNKNOWN_ACTION",
-                severity="hard",
-                message=f"Unknown action '{action.action_kind}'.",
-            )
-
-        if action.action_kind == "ask_expert":
-            if not action.expert_id:
-                return RuleViolation(
-                    rule_code="MISSING_REQUIRED_FIELD",
-                    severity="hard",
-                    message="ask_expert requires 'expert_id'.",
-                )
-            if action.expert_id not in self._KNOWN_EXPERTS:
-                return RuleViolation(
-                    rule_code="UNKNOWN_EXPERT",
-                    severity="hard",
-                    message=f"Unknown expert '{action.expert_id}'.",
-                )
-
-        if action.action_kind == "state_hypothesis":
-            hypothesis = (action.parameters or {}).get("hypothesis")
-            if not isinstance(hypothesis, str) or not hypothesis.strip():
-                return RuleViolation(
-                    rule_code="MISSING_REQUIRED_FIELD",
-                    severity="hard",
-                    message="state_hypothesis requires a non-empty 'hypothesis' parameter.",
-                )
-
-        if action.action_kind == "finalize_recommendation":
-            recommendation = (action.parameters or {}).get("recommendation")
-            if not isinstance(recommendation, dict):
-                return RuleViolation(
-                    rule_code="MISSING_REQUIRED_FIELD",
-                    severity="hard",
-                    message="finalize_recommendation requires a structured 'recommendation' object.",
-                )
-
-        if action.action_kind == "run_hydrolysis_assay":
-            candidate_family = (action.parameters or {}).get("candidate_family")
-            if not isinstance(candidate_family, str) or candidate_family not in ASSAY_ROUTE_FAMILIES:
-                return RuleViolation(
-                    rule_code="MISSING_REQUIRED_FIELD",
-                    severity="hard",
-                    message=(
-                        "run_hydrolysis_assay requires a valid 'candidate_family' parameter "
-                        f"from {ASSAY_ROUTE_FAMILIES}."
-                    ),
-                )
-
-        return None
-
     def _check_terminal_state(self, latent: LatentEpisodeState) -> RuleViolation | None:
         if latent.done:
             return RuleViolation(
@@ -237,7 +182,7 @@ class RuleEngine:
         remaining_budget = max(0.0, latent.budget_total - latent.budget_spent)
         remaining_time = max(0, latent.time_total_days - latent.time_spent_days)
 
-        cost = ACTION_COSTS.get(action.action_kind, {"budget": 0.0, "time_days": 0})
+        cost = ACTION_COSTS[action.action_kind]
         budget_cost = float(cost["budget"])
         time_cost = int(cost["time_days"])
 
@@ -283,42 +228,46 @@ class RuleEngine:
         def warning(rule_code: str, message: str) -> RuleViolation:
             return RuleViolation(rule_code=rule_code, severity="soft", message=message)
 
-        if a == "measure_crystallinity" and not d.get("feedstock_inspected", False):
+        if a == ActionKind.MEASURE_CRYSTALLINITY and not d.get("feedstock_inspected", False):
             return hard(
                 "CRYSTALLINITY_WITHOUT_INSPECTION",
                 "Cannot measure crystallinity before feedstock inspection.",
                 ["feedstock_inspected"],
             ), soft
 
-        if a == "measure_contamination" and not d.get("feedstock_inspected", False):
+        if a == ActionKind.MEASURE_CONTAMINATION and not d.get("feedstock_inspected", False):
             return hard(
                 "CONTAMINATION_WITHOUT_INSPECTION",
                 "Cannot measure contamination before feedstock inspection.",
                 ["feedstock_inspected"],
             ), soft
 
-        if a == "estimate_particle_size" and not d.get("feedstock_inspected", False):
+        if a == ActionKind.ESTIMATE_PARTICLE_SIZE and not d.get("feedstock_inspected", False):
             return hard(
                 "PARTICLE_SIZE_WITHOUT_INSPECTION",
                 "Cannot estimate particle size before feedstock inspection.",
                 ["feedstock_inspected"],
             ), soft
 
-        if a == "estimate_stability_signal" and not d.get("candidate_registry_queried", False):
+        if a == ActionKind.ESTIMATE_STABILITY_SIGNAL and not d.get(
+            "candidate_registry_queried", False
+        ):
             return hard(
                 "STABILITY_WITHOUT_CANDIDATES",
                 "Cannot estimate stability before querying the candidate registry.",
                 ["candidate_registry_queried"],
             ), soft
 
-        if a == "run_thermostability_assay" and not d.get("candidate_registry_queried", False):
+        if a == ActionKind.RUN_THERMOSTABILITY_ASSAY and not d.get(
+            "candidate_registry_queried", False
+        ):
             return hard(
                 "THERMO_WITHOUT_CANDIDATES",
                 "Cannot run thermostability assay before candidate retrieval.",
                 ["candidate_registry_queried"],
             ), soft
 
-        if a == "test_cocktail":
+        if a == ActionKind.TEST_COCKTAIL:
             missing: list[str] = []
             if not d.get("candidate_registry_queried", False):
                 missing.append("candidate_registry_queried")
@@ -331,7 +280,7 @@ class RuleEngine:
                     missing,
                 ), soft
 
-        if a == "test_pretreatment" and not (
+        if a == ActionKind.TEST_PRETREATMENT and not (
             d.get("activity_assay_run", False) or d.get("crystallinity_measured", False)
         ):
             return hard(
@@ -340,7 +289,7 @@ class RuleEngine:
                 ["activity_assay_run OR crystallinity_measured"],
             ), soft
 
-        if a == "run_hydrolysis_assay":
+        if a == ActionKind.RUN_HYDROLYSIS_ASSAY:
             if not (
                 d.get("feedstock_inspected", False) or d.get("candidate_registry_queried", False)
             ):
@@ -351,7 +300,7 @@ class RuleEngine:
                     )
                 )
 
-        if a == "finalize_recommendation":
+        if a == ActionKind.FINALIZE_RECOMMENDATION:
             evidence_count = self._evidence_count(latent)
             if evidence_count < 2:
                 soft.append(
@@ -374,16 +323,21 @@ class RuleEngine:
 
         a = action.action_kind
         recent = history[-4:]
-        recent_action_kinds: list[str] = []
+        recent_action_kinds: list[ActionKind] = []
         for item in recent:
             action_kind = getattr(item, "action_kind", None)
             if action_kind is None and isinstance(item, dict):
                 action_kind = item.get("action_kind")
-            if isinstance(action_kind, str):
+            if isinstance(action_kind, ActionKind):
                 recent_action_kinds.append(action_kind)
+            elif isinstance(action_kind, str):
+                try:
+                    recent_action_kinds.append(ActionKind(action_kind))
+                except ValueError:
+                    continue
 
         if recent_action_kinds and recent_action_kinds[-1] == a:
-            if a in {"query_literature", "query_candidate_registry"}:
+            if a in {ActionKind.QUERY_LITERATURE, ActionKind.QUERY_CANDIDATE_REGISTRY}:
                 return RuleViolation(
                     rule_code="REDUNDANT_QUERY",
                     severity="soft",
@@ -393,18 +347,21 @@ class RuleEngine:
             last_expert_id = getattr(last, "expert_id", None)
             if last_expert_id is None and isinstance(last, dict):
                 last_expert_id = last.get("expert_id")
-            if a == "ask_expert" and last_expert_id == action.expert_id:
+            current_expert_id = (
+                action.parameters.expert_id if isinstance(action.parameters, ExpertQueryParams) else None
+            )
+            if a == ActionKind.ASK_EXPERT and last_expert_id == current_expert_id:
                 return RuleViolation(
                     rule_code="REPEATED_EXPERT_NO_NEW_CONTEXT",
                     severity="soft",
-                    message=f"Repeated consultation with expert '{action.expert_id}' without new evidence.",
+                    message=f"Repeated consultation with expert '{current_expert_id}' without new evidence.",
                 )
             if a in {
-                "measure_crystallinity",
-                "measure_contamination",
-                "estimate_particle_size",
-                "run_hydrolysis_assay",
-                "run_thermostability_assay",
+                ActionKind.MEASURE_CRYSTALLINITY,
+                ActionKind.MEASURE_CONTAMINATION,
+                ActionKind.ESTIMATE_PARTICLE_SIZE,
+                ActionKind.RUN_HYDROLYSIS_ASSAY,
+                ActionKind.RUN_THERMOSTABILITY_ASSAY,
             }:
                 return RuleViolation(
                     rule_code="REDUNDANT_ASSAY",
@@ -412,7 +369,11 @@ class RuleEngine:
                     message=f"Repeated '{a}' may waste budget unless justified by new conditions.",
                 )
 
-        if a in {"inspect_feedstock", "query_literature", "query_candidate_registry"} and a in recent_action_kinds:
+        if a in {
+            ActionKind.INSPECT_FEEDSTOCK,
+            ActionKind.QUERY_LITERATURE,
+            ActionKind.QUERY_CANDIDATE_REGISTRY,
+        } and a in recent_action_kinds:
             return RuleViolation(
                 rule_code="LOW_VALUE_REVISIT",
                 severity="soft",
@@ -429,14 +390,17 @@ class RuleEngine:
         a = action.action_kind
         evidence_count = self._evidence_count(latent)
 
-        if a == "state_hypothesis" and evidence_count < 2:
+        if a == ActionKind.STATE_HYPOTHESIS and evidence_count < 2:
             return RuleViolation(
                 rule_code="WEAK_HYPOTHESIS_SUPPORT",
                 severity="soft",
                 message="Hypothesis is being stated with limited supporting evidence.",
             )
 
-        if a == "ask_expert" and evidence_count == 0 and action.expert_id == "process_engineer":
+        expert_id = (
+            action.parameters.expert_id if isinstance(action.parameters, ExpertQueryParams) else None
+        )
+        if a == ActionKind.ASK_EXPERT and evidence_count == 0 and expert_id == ExpertId.PROCESS_ENGINEER:
             return RuleViolation(
                 rule_code="PREMATURE_EXPERT_SELECTION",
                 severity="soft",

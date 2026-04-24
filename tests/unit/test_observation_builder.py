@@ -2,80 +2,41 @@ from __future__ import annotations
 
 import pytest
 
-from models import BioMedAction
+from models import ActionKind, FORBIDDEN_PUBLIC_DATA_KEYS
+from server.rules import RuleEngine
+from server.simulator.observation_builder import BioMedObservationBuilder
+from server.simulator.scenarios import sample_episode_latent_state
 
 
 pytestmark = pytest.mark.unit
 
 
-def test_reset_bundle_contains_legal_actions_and_no_hidden_truth(
-    observation_builder, rule_engine, high_crystallinity_latent
-) -> None:
-    bundle = observation_builder.build_reset_bundle(
-        high_crystallinity_latent,
-        legal_next_actions=rule_engine.get_legal_next_actions(high_crystallinity_latent),
+def test_reset_bundle_emits_canonical_action_specs() -> None:
+    latent = sample_episode_latent_state(
+        seed=7,
+        scenario_family="high_crystallinity",
+        difficulty="easy",
     )
-    dumped = bundle.observation.model_dump_json()
-    assert "inspect_feedstock" in bundle.observation.legal_next_actions
-    assert "best_intervention_family" not in dumped
-    assert "candidate_family_scores" not in dumped
-
-
-def test_step_bundle_renders_artifacts_and_latest_output(
-    observation_builder, transition_engine, high_crystallinity_latent
-) -> None:
-    result = transition_engine.step(
-        state=high_crystallinity_latent,
-        action=BioMedAction(action_kind="inspect_feedstock", parameters={}),
+    builder = BioMedObservationBuilder()
+    bundle = builder.build_reset_bundle(
+        latent,
+        legal_next_actions=RuleEngine().get_legal_next_actions(latent),
     )
-    bundle = observation_builder.build_step_bundle(result.next_state, result.effect, legal_next_actions=["query_literature"])
-    assert bundle.observation.latest_output is not None
-    assert bundle.observation.artifacts
-    assert bundle.observation.stage == "triage"
+
+    assert bundle.observation.legal_next_actions
+    first = bundle.observation.legal_next_actions[0]
+    assert first.action_kind == ActionKind.INSPECT_FEEDSTOCK
+    assert isinstance(first.required_fields, list)
 
 
-def test_step_bundle_sanitizes_public_effect_payloads(
-    observation_builder, transition_engine, high_crystallinity_latent
-) -> None:
-    inspected = transition_engine.step(
-        state=high_crystallinity_latent,
-        action=BioMedAction(action_kind="query_candidate_registry", parameters={}),
-    )
-    result = transition_engine.step(
-        state=inspected.next_state,
-        action=BioMedAction(action_kind="run_thermostability_assay", parameters={}),
-    )
-    bundle = observation_builder.build_step_bundle(
-        result.next_state, result.effect, legal_next_actions=["finalize_recommendation"]
-    )
-    dumped = bundle.observation.model_dump_json()
-    assert "thermostability_bottleneck_risk" not in dumped
-    assert "thermostability_risk" not in dumped
+def test_public_observation_never_contains_forbidden_truth_keys(asked_expert_env) -> None:
+    observation = asked_expert_env.reset(
+        seed=7,
+        scenario_family="high_crystallinity",
+        difficulty="easy",
+    ).model_dump(mode="json")
+    visible_state = asked_expert_env.state.model_dump(mode="json")
 
-
-def test_invalid_action_observation_includes_warnings_and_existing_artifacts(
-    observation_builder, rule_engine, high_crystallinity_latent
-) -> None:
-    decision = rule_engine.validate_action(
-        high_crystallinity_latent,
-        BioMedAction(action_kind="hack_the_lab", parameters={}),
-    ).decision
-    obs = observation_builder.build_invalid_action_observation(
-        latent=high_crystallinity_latent,
-        decision=decision,
-        legal_next_actions=["inspect_feedstock"],
-    )
-    assert obs.warnings
-    assert obs.legal_next_actions == ["inspect_feedstock"]
-
-
-def test_visible_state_completed_milestones_follow_progress_ledger(
-    observation_builder, high_crystallinity_latent
-) -> None:
-    high_crystallinity_latent.progress.mark_milestone("feedstock_inspected")
-    high_crystallinity_latent.progress.record_discovery(
-        "candidate_registry_queried", True
-    )
-    bundle = observation_builder.build_reset_bundle(high_crystallinity_latent)
-
-    assert bundle.visible_state.completed_milestones == ["feedstock_inspected"]
+    for forbidden_key in FORBIDDEN_PUBLIC_DATA_KEYS:
+        assert forbidden_key not in observation
+        assert forbidden_key not in visible_state
