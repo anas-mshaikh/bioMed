@@ -6,8 +6,13 @@ import pytest
 from pydantic import ValidationError
 
 from models import (
+    Difficulty,
+    ExpertId,
+    InterventionFamily,
     REWARD_COMPONENT_KEYS,
     SCHEMA_VERSION,
+    ScenarioFamily,
+    Stage,
     ActionKind,
     BioMedAction,
     BioMedObservation,
@@ -60,6 +65,16 @@ def test_public_models_are_strict_and_versioned() -> None:
 
 def test_reward_keys_are_owned_by_contract() -> None:
     assert REWARD_COMPONENT_KEYS == tuple(item.value for item in RewardKey)
+
+
+def test_simulator_imports_canonical_vocabulary_objects() -> None:
+    from server.simulator import latent_models, scenarios
+
+    assert scenarios.ScenarioFamily is ScenarioFamily
+    assert scenarios.Difficulty is Difficulty
+    assert latent_models.InterventionFamily is InterventionFamily
+    assert latent_models.ExpertId is ExpertId
+    assert latent_models.Stage is Stage
 
 
 def test_runtime_package_does_not_emit_legacy_aliases() -> None:

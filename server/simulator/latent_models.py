@@ -6,23 +6,12 @@ from random import Random
 from typing import Any, Literal
 from uuid import uuid4
 
+from models import ExpertId, InterventionFamily, Stage
+
 
 PetForm = Literal["bottle_flake", "film", "fiber"]
 Band = Literal["low", "medium", "high"]
 ParticleSizeBand = Literal["small", "medium", "large"]
-InterventionFamily = Literal[
-    "pretreat_then_single",
-    "thermostable_single",
-    "cocktail",
-    "no_go",
-]
-ExpertId = Literal[
-    "wet_lab_lead",
-    "computational_biologist",
-    "process_engineer",
-    "cost_reviewer",
-]
-Stage = Literal["intake", "triage", "assay", "decision", "done"]
 
 
 def _require_non_empty(value: str, field_name: str) -> None:
@@ -90,13 +79,7 @@ class LatentInterventionTruth:
     candidate_family_scores: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.best_intervention_family not in {
-            "pretreat_then_single",
-            "thermostable_single",
-            "cocktail",
-            "no_go",
-        }:
-            raise ValueError(f"Invalid best_intervention_family: {self.best_intervention_family!r}")
+        self.best_intervention_family = InterventionFamily(self.best_intervention_family)
         if self.economic_viability_band not in {"low", "medium", "high"}:
             raise ValueError(f"Invalid economic_viability_band: {self.economic_viability_band!r}")
 
@@ -150,13 +133,7 @@ class LatentExpertBelief:
     knows_true_bottleneck: bool = False
 
     def __post_init__(self) -> None:
-        if self.expert_id not in {
-            "wet_lab_lead",
-            "computational_biologist",
-            "process_engineer",
-            "cost_reviewer",
-        }:
-            raise ValueError(f"Invalid expert_id: {self.expert_id!r}")
+        self.expert_id = ExpertId(self.expert_id)
 
         _require_probability(self.confidence_bias, "confidence_bias")
         _require_non_empty(self.preferred_focus, "preferred_focus")
@@ -237,8 +214,7 @@ class ExperimentProgress:
     discoveries: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.stage not in {"intake", "triage", "assay", "decision", "done"}:
-            raise ValueError(f"Invalid stage: {self.stage!r}")
+        self.stage = Stage(self.stage)
         _require_non_negative(self.step_count, "step_count")
         if not isinstance(self.consulted_experts, set):
             raise TypeError("consulted_experts must be a set")

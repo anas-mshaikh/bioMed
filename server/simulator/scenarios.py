@@ -1,10 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from random import Random
-from typing import Literal, TypeVar
+from typing import TypeVar
 from uuid import NAMESPACE_URL, uuid5
 
+from models import (
+    DIFFICULTY_VALUES,
+    SCENARIO_FAMILY_VALUES,
+    Difficulty,
+    InterventionFamily,
+    ScenarioFamily,
+)
 from server.simulator.latent_models import (
     ExperimentProgress,
     LatentAssayNoise,
@@ -16,23 +23,8 @@ from server.simulator.latent_models import (
 )
 
 
-ScenarioFamily = Literal[
-    "high_crystallinity",
-    "thermostability_bottleneck",
-    "contamination_artifact",
-    "no_go",
-]
-
-Difficulty = Literal["easy", "medium", "hard"]
-
-SUPPORTED_SCENARIO_FAMILIES: tuple[ScenarioFamily, ...] = (
-    "high_crystallinity",
-    "thermostability_bottleneck",
-    "contamination_artifact",
-    "no_go",
-)
-
-SUPPORTED_DIFFICULTIES: tuple[Difficulty, ...] = ("easy", "medium", "hard")
+SUPPORTED_SCENARIO_FAMILIES: tuple[str, ...] = SCENARIO_FAMILY_VALUES
+SUPPORTED_DIFFICULTIES: tuple[str, ...] = DIFFICULTY_VALUES
 
 T = TypeVar("T")
 
@@ -204,7 +196,7 @@ class ScenarioTemplate:
     expert_knows_true_bottleneck_probability: dict[str, float]
 
     def __post_init__(self) -> None:
-        if self.family not in SUPPORTED_SCENARIO_FAMILIES:
+        if self.family.value not in SUPPORTED_SCENARIO_FAMILIES:
             raise ValueError(f"Unsupported scenario family: {self.family!r}")
 
         if not self.title.strip():
@@ -251,7 +243,7 @@ class ScenarioTemplate:
 
 
 DIFFICULTY_PROFILES: dict[Difficulty, DifficultyProfile] = {
-    "easy": DifficultyProfile(
+    Difficulty.EASY: DifficultyProfile(
         budget_range=(95.0, 120.0),
         time_days_range=(18, 24),
         max_steps_range=(6, 8),
@@ -262,7 +254,7 @@ DIFFICULTY_PROFILES: dict[Difficulty, DifficultyProfile] = {
         expert_misdirection_bonus=0.00,
         expert_truth_visibility_bonus=0.10,
     ),
-    "medium": DifficultyProfile(
+    Difficulty.MEDIUM: DifficultyProfile(
         budget_range=(80.0, 110.0),
         time_days_range=(14, 21),
         max_steps_range=(7, 9),
@@ -273,7 +265,7 @@ DIFFICULTY_PROFILES: dict[Difficulty, DifficultyProfile] = {
         expert_misdirection_bonus=0.05,
         expert_truth_visibility_bonus=0.00,
     ),
-    "hard": DifficultyProfile(
+    Difficulty.HARD: DifficultyProfile(
         budget_range=(65.0, 95.0),
         time_days_range=(10, 16),
         max_steps_range=(8, 10),
@@ -288,8 +280,8 @@ DIFFICULTY_PROFILES: dict[Difficulty, DifficultyProfile] = {
 
 
 SCENARIO_LIBRARY: dict[ScenarioFamily, ScenarioTemplate] = {
-    "high_crystallinity": ScenarioTemplate(
-        family="high_crystallinity",
+    ScenarioFamily.HIGH_CRYSTALLINITY: ScenarioTemplate(
+        family=ScenarioFamily.HIGH_CRYSTALLINITY,
         title="High-crystallinity PET feedstock",
         description=(
             "The dominant hidden challenge is poor substrate accessibility. "
@@ -322,10 +314,10 @@ SCENARIO_LIBRARY: dict[ScenarioFamily, ScenarioTemplate] = {
             "high": 0.55,
         },
         best_intervention_weights={
-            "pretreat_then_single": 0.70,
-            "thermostable_single": 0.18,
-            "cocktail": 0.08,
-            "no_go": 0.04,
+            InterventionFamily.PRETREAT_THEN_SINGLE.value: 0.70,
+            InterventionFamily.THERMOSTABLE_SINGLE.value: 0.18,
+            InterventionFamily.COCKTAIL.value: 0.08,
+            InterventionFamily.NO_GO.value: 0.04,
         },
         thermostability_bottleneck_probability=0.20,
         activity_bottleneck_probability=0.40,
@@ -376,8 +368,8 @@ SCENARIO_LIBRARY: dict[ScenarioFamily, ScenarioTemplate] = {
             "cost_reviewer": 0.25,
         },
     ),
-    "thermostability_bottleneck": ScenarioTemplate(
-        family="thermostability_bottleneck",
+    ScenarioFamily.THERMOSTABILITY_BOTTLENECK: ScenarioTemplate(
+        family=ScenarioFamily.THERMOSTABILITY_BOTTLENECK,
         title="Thermostability-limited remediation",
         description=(
             "Bench-level activity may look promising, but the hidden failure mode is "
@@ -410,10 +402,10 @@ SCENARIO_LIBRARY: dict[ScenarioFamily, ScenarioTemplate] = {
             "high": 0.20,
         },
         best_intervention_weights={
-            "pretreat_then_single": 0.10,
-            "thermostable_single": 0.72,
-            "cocktail": 0.12,
-            "no_go": 0.06,
+            InterventionFamily.PRETREAT_THEN_SINGLE.value: 0.10,
+            InterventionFamily.THERMOSTABLE_SINGLE.value: 0.72,
+            InterventionFamily.COCKTAIL.value: 0.12,
+            InterventionFamily.NO_GO.value: 0.06,
         },
         thermostability_bottleneck_probability=0.82,
         activity_bottleneck_probability=0.18,
@@ -464,8 +456,8 @@ SCENARIO_LIBRARY: dict[ScenarioFamily, ScenarioTemplate] = {
             "cost_reviewer": 0.20,
         },
     ),
-    "contamination_artifact": ScenarioTemplate(
-        family="contamination_artifact",
+    ScenarioFamily.CONTAMINATION_ARTIFACT: ScenarioTemplate(
+        family=ScenarioFamily.CONTAMINATION_ARTIFACT,
         title="Contamination-driven assay artifact",
         description=(
             "The hidden issue is not only catalytic quality but misleading evidence. "
@@ -498,10 +490,10 @@ SCENARIO_LIBRARY: dict[ScenarioFamily, ScenarioTemplate] = {
             "high": 0.30,
         },
         best_intervention_weights={
-            "pretreat_then_single": 0.48,
-            "thermostable_single": 0.22,
-            "cocktail": 0.14,
-            "no_go": 0.16,
+            InterventionFamily.PRETREAT_THEN_SINGLE.value: 0.48,
+            InterventionFamily.THERMOSTABLE_SINGLE.value: 0.22,
+            InterventionFamily.COCKTAIL.value: 0.14,
+            InterventionFamily.NO_GO.value: 0.16,
         },
         thermostability_bottleneck_probability=0.18,
         activity_bottleneck_probability=0.28,
@@ -552,8 +544,8 @@ SCENARIO_LIBRARY: dict[ScenarioFamily, ScenarioTemplate] = {
             "cost_reviewer": 0.22,
         },
     ),
-    "no_go": ScenarioTemplate(
-        family="no_go",
+    ScenarioFamily.NO_GO: ScenarioTemplate(
+        family=ScenarioFamily.NO_GO,
         title="Economically non-viable remediation program",
         description=(
             "The hidden truth is that continued spend is unlikely to justify itself. "
@@ -586,10 +578,10 @@ SCENARIO_LIBRARY: dict[ScenarioFamily, ScenarioTemplate] = {
             "high": 0.20,
         },
         best_intervention_weights={
-            "pretreat_then_single": 0.10,
-            "thermostable_single": 0.18,
-            "cocktail": 0.08,
-            "no_go": 0.64,
+            InterventionFamily.PRETREAT_THEN_SINGLE.value: 0.10,
+            InterventionFamily.THERMOSTABLE_SINGLE.value: 0.18,
+            InterventionFamily.COCKTAIL.value: 0.08,
+            InterventionFamily.NO_GO.value: 0.64,
         },
         thermostability_bottleneck_probability=0.12,
         activity_bottleneck_probability=0.22,
