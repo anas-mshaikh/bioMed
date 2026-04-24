@@ -4,7 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-from models import (
+from biomed_models import (
     ActionKind,
     BioMedAction,
     BioMedObservation,
@@ -220,7 +220,7 @@ class BioMedEnvironment:
         catalyst_truth = getattr(latent, "catalyst_truth", None)
         assay_noise = getattr(latent, "assay_noise", None)
 
-        from models import infer_true_bottleneck, infer_true_family
+        from biomed_models import infer_true_bottleneck, infer_true_family
 
         best_family = str(getattr(catalyst_truth, "best_intervention_family", "") or "")
         return {

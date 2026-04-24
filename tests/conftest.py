@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from models import (
+from biomed_models import (
     ActionKind,
     BioMedAction,
     BioMedObservation,

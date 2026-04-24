@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from models import (
+from biomed_models import (
     ACTION_KIND_VALUES,
     BENCHMARK_METRIC_KEYS,
     ONLINE_METRIC_KEYS,
@@ -20,7 +20,7 @@ from models import (
     structured_expert_guidance_from_observation,
 )
 from .trajectory import Trajectory, TrajectoryDataset
-from models.semantics import (
+from biomed_models.semantics import (
     action_sequence_follows_expert_guidance,
     recommendation_follows_expert_guidance,
 )

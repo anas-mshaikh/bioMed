@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from models import ActionKind, BioMedAction
+from biomed_models import ActionKind, BioMedAction
 from training.baselines import build_policy
 from training.parsing import parse_tool_call
 from training.rollout_collection import collect_rollouts

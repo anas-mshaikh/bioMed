@@ -10,7 +10,7 @@ from openenv.core.env_server import create_fastapi_app
 from pydantic import BaseModel, ConfigDict
 import uvicorn
 
-from models import BioMedAction, BioMedObservation, BioMedVisibleState
+from biomed_models import BioMedAction, BioMedObservation, BioMedVisibleState
 from server.bioMed_environment import BioMedEnvironment
 
 

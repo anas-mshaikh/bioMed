@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from models import REWARD_COMPONENT_KEYS, RewardBreakdown
+from biomed_models import REWARD_COMPONENT_KEYS, RewardBreakdown
 
 
 def _reward_component_value(source: object, key: str) -> float:

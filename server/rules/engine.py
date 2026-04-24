@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from models import (
+from biomed_models import (
     ACTION_COSTS,
     ActionKind,
     BioMedAction,

@@ -6,7 +6,7 @@ from random import Random
 from typing import Any, Literal
 from uuid import uuid4
 
-from models import ExpertId, InterventionFamily, Stage
+from biomed_models import ExpertId, InterventionFamily, Stage
 
 
 PetForm = Literal["bottle_flake", "film", "fiber"]

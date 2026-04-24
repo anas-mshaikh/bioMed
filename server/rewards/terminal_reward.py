@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from models import (
+from biomed_models import (
     infer_true_bottleneck,
     infer_true_family,
     milestone_count,

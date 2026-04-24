@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any
 
-from models import (
+from biomed_models import (
     ACTION_COSTS,
     ActionKind,
     BioMedAction,
@@ -20,7 +20,7 @@ from models import (
     structured_expert_guidance_from_observation,
     terminal_recommendation_rationale,
 )
-from models.semantics import infer_recommendation_from_structured_signals
+from biomed_models.semantics import infer_recommendation_from_structured_signals
 
 ASSAY_ROUTE_FAMILIES = {
     InterventionFamily.PRETREAT_THEN_SINGLE.value,

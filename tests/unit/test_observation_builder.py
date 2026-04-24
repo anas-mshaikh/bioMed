@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from models import ActionKind, FORBIDDEN_PUBLIC_DATA_KEYS
+from biomed_models import ActionKind, FORBIDDEN_PUBLIC_DATA_KEYS
 from server.rules import RuleEngine
 from server.simulator.observation_builder import BioMedObservationBuilder
 from server.simulator.scenarios import sample_episode_latent_state

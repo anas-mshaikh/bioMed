@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from models import ActionKind
+from biomed_models import ActionKind
 
 class RuleSeverity(str, Enum):
     NONE = "none"

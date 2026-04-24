@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from models import ActionKind, BioMedAction, SCHEMA_VERSION
+from biomed_models import ActionKind, BioMedAction, SCHEMA_VERSION
 from training.trajectory import Trajectory, TrajectoryDataset
 
 

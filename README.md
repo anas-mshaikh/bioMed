@@ -1,7 +1,6 @@
 ---
-title: BioMed Benchmark Server
+otitle: BioMed Benchmark Server
 emoji: 🧪
-colorFrom: teal
 colorTo: green
 sdk: docker
 pinned: false
@@ -12,12 +11,12 @@ tags:
   - benchmark
   - reinforcement-learning
 ---
-
 # BioMed
 
 BioMed is an OpenEnv benchmark for hidden-state PET bioremediation planning. The agent acts as a program lead under budget and time limits, gathers evidence through assays and expert consultations, and must submit a final program recommendation with the right intervention family, bottleneck diagnosis, and stop/go decision.
 
 This repository is not just a demo app. It contains:
+
 - an OpenEnv-compatible server in [server/app.py](server/app.py)
 - a hidden-state simulator and rule engine under [server/](server)
 - reward, rollout, replay, and evaluation utilities under [training/](training)
@@ -31,6 +30,7 @@ The hidden truth includes scenario family, intervention-family viability, bottle
 ### Scenario families
 
 Current scenario families are generated in [server/tasks/scenarios.py](server/tasks/scenarios.py):
+
 - `high_crystallinity`
 - `contamination_artifact`
 - `thermostability_bottleneck`
@@ -40,7 +40,8 @@ Current scenario families are generated in [server/tasks/scenarios.py](server/ta
 
 ### Action surface
 
-The public action model is [models.py](models.py)`::BioMedAction`. Key action kinds include:
+The public action model is [models.py](models.py) `::BioMedAction`. Key action kinds include:
+
 - intake and triage: `inspect_feedstock`, `query_literature`, `query_candidate_registry`
 - evidence gathering: `measure_crystallinity`, `measure_contamination`, `estimate_particle_size`, `estimate_stability_signal`
 - intervention tests: `run_hydrolysis_assay`, `run_thermostability_assay`, `test_pretreatment`, `test_cocktail`
@@ -50,8 +51,8 @@ The public action model is [models.py](models.py)`::BioMedAction`. Key action ki
 
 ### Observation and state
 
-- [models.py](models.py)`::BioMedObservation` is the visible agent observation returned from `reset()` and `step()`.
-- [models.py](models.py)`::BioMedVisibleState` is the visible state returned by `state()`.
+- [models.py](models.py) `::BioMedObservation` is the visible agent observation returned from `reset()` and `step()`.
+- [models.py](models.py) `::BioMedVisibleState` is the visible state returned by `state()`.
 - Hidden latent truth is not part of the public environment contract.
 
 ## Quick start
@@ -151,6 +152,7 @@ Saved public rollout JSONL is truth-clean by default. Benchmark truth needed for
 ## Testing
 
 Test lanes:
+
 - `tests/unit`: deterministic local invariants
 - `tests/integration`: environment loop, reward, rollout, and hidden-truth discipline
 - `tests/api`: real OpenEnv HTTP/WebSocket contract tests against the shipped app
@@ -172,6 +174,7 @@ docker build -f server/Dockerfile -t biomed-env:latest .
 ```
 
 OpenEnv manifest:
+
 - [openenv.yaml](openenv.yaml)
 
 Push to Hugging Face Spaces with the OpenEnv CLI:
@@ -181,6 +184,7 @@ openenv push
 ```
 
 The Docker Space exposes:
+
 - `/health`
 - `/schema`
 - `/reset`, `/step`, `/state`

@@ -16,7 +16,7 @@ try:
         LatestOutput,
     )
 except ImportError:  # pragma: no cover - direct module usage
-    from models import (  # type: ignore
+    from biomed_models import (  # type: ignore
         ArtifactCard,
         BioMedAction,
         BioMedObservation,

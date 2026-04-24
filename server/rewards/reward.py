@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from models import BioMedAction
+from biomed_models import BioMedAction
 from server.rules import RuleCheckResult
 from server.simulator.transition import TransitionResult
 

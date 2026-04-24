@@ -5,7 +5,7 @@ from random import Random
 from typing import TypeVar
 from uuid import NAMESPACE_URL, uuid5
 
-from models import (
+from biomed_models import (
     DIFFICULTY_VALUES,
     SCENARIO_FAMILY_VALUES,
     Difficulty,

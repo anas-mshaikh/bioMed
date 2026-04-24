@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from models import (
+from biomed_models import (
     ACTION_COSTS,
     BioMedAction,
     EVIDENCE_MILESTONE_KEYS,

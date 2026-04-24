@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Literal, Protocol, runtime_checkable
 
-from models import (
+from biomed_models import (
     ActionKind,
     BioMedAction,
     BioMedObservation,

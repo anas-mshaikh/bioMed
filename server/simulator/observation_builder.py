@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from models import (
+from biomed_models import (
     FORBIDDEN_PUBLIC_DATA_KEYS,
     ActionKind,
     ArtifactCard,

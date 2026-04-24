@@ -8,7 +8,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Iterable, Mapping, Sequence
 
-from models import PRIVATE_TRUTH_METADATA_KEYS, SCHEMA_VERSION
+from biomed_models import PRIVATE_TRUTH_METADATA_KEYS, SCHEMA_VERSION
 
 
 def _is_sequence(value: Any) -> bool:

@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from models import (
+import models as public_models
+from biomed_models import (
     Difficulty,
     ExpertId,
     InterventionFamily,
@@ -80,11 +81,12 @@ def test_simulator_imports_canonical_vocabulary_objects() -> None:
 def test_runtime_package_does_not_emit_legacy_aliases() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     runtime_paths = [
-        repo_root / "models",
+        repo_root / "biomed_models",
         repo_root / "server",
         repo_root / "training",
         repo_root / "client.py",
         repo_root / "__init__.py",
+        repo_root / "models.py",
     ]
 
     combined = "\n".join(
@@ -97,3 +99,8 @@ def test_runtime_package_does_not_emit_legacy_aliases() -> None:
     assert "submit_recommendation" not in combined
     assert "primary_bottleneck" not in combined
     assert "top_intervention_family" not in combined
+
+
+def test_root_models_module_is_the_public_contract_surface() -> None:
+    assert public_models.BioMedAction is BioMedAction
+    assert public_models.SCHEMA_VERSION == SCHEMA_VERSION

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from models import ActionKind, BioMedAction, ExpertId, ExpertQueryParams
+from biomed_models import ActionKind, BioMedAction, ExpertId, ExpertQueryParams
 
 
 pytestmark = pytest.mark.integration

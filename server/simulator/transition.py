@@ -4,7 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
-from models import (
+from biomed_models import (
     ArtifactType,
     BioMedAction,
     ExpertId,
