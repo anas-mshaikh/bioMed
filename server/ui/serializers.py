@@ -34,32 +34,32 @@ _SCENARIO_CARD_DEFS: list[dict[str, Any]] = [
         "scenario_family": "high_crystallinity",
         "title": "High Crystallinity",
         "subtitle": "Accessibility bottleneck",
-        "description": "The substrate is hard to attack because PET ordering limits enzyme access.",
-        "benchmark_role": "tests whether the agent notices substrate accessibility issues early.",
+        "description": "PET structure limits access.",
+        "benchmark_role": "Checks if the agent spots access limits.",
         "available": True,
     },
     {
         "scenario_family": "thermostability_bottleneck",
         "title": "Thermostability Bottleneck",
         "subtitle": "Operating-conditions bottleneck",
-        "description": "A candidate looks plausible on paper but fails under process-like temperature.",
-        "benchmark_role": "tests whether the agent separates activity from operating stability.",
+        "description": "A candidate fails under heat.",
+        "benchmark_role": "Checks if the agent separates activity from stability.",
         "available": True,
     },
     {
         "scenario_family": "contamination_artifact",
         "title": "Contamination Artifact",
         "subtitle": "Confounded evidence",
-        "description": "Assay output is distorted by contamination or noisy readout artifacts.",
-        "benchmark_role": "tests whether the agent avoids trusting contaminated evidence.",
+        "description": "Assay output is noisy.",
+        "benchmark_role": "Checks if the agent avoids bad evidence.",
         "available": True,
     },
     {
         "scenario_family": "no_go",
         "title": "No-Go",
         "subtitle": "Stop is correct",
-        "description": "The economically correct decision is to stop rather than keep spending budget.",
-        "benchmark_role": "tests whether the agent can terminate early for the right reason.",
+        "description": "The right call is to stop.",
+        "benchmark_role": "Checks if the agent can stop for the right reason.",
         "available": True,
     },
     {
@@ -112,25 +112,25 @@ _REWARD_LABELS: dict[str, str] = {
 }
 
 _WHY_THIS_MATTERED: dict[str, str] = {
-    "inspect_feedstock": "Establishes visible feedstock context before spending budget on assays.",
-    "inspect_sample": "Establishes visible feedstock context before spending budget on assays.",
-    "measure_crystallinity": "Tests whether PET substrate accessibility may limit degradation.",
-    "measure_contamination": "Checks whether observed activity could be distorted by contamination.",
-    "estimate_particle_size": "Estimates surface-area context for PET accessibility.",
-    "query_literature": "Adds background evidence before selecting costly follow-up actions.",
-    "query_candidate_registry": "Narrows intervention options before route-specific assays.",
-    "retrieve_candidate_families": "Narrows intervention options before route-specific assays.",
-    "rank_candidate_systems": "Narrows intervention options before route-specific assays.",
-    "estimate_stability_signal": "Checks whether candidate performance may survive operating conditions.",
-    "run_hydrolysis_assay": "Provides direct activity evidence for the selected intervention route.",
-    "run_activity_assay": "Provides direct activity evidence for the selected intervention route.",
-    "run_thermostability_assay": "Tests whether the route is robust under process-like temperature.",
-    "test_pretreatment": "Tests whether changing substrate accessibility improves results.",
-    "test_cocktail": "Tests whether a combination route outperforms single-route evidence.",
-    "ask_expert": "Adds simulated expert input without revealing hidden truth.",
-    "state_hypothesis": "Records the agent's current public hypothesis before final decision.",
-    "finalize_recommendation": "Ends the episode and scores the final PET remediation recommendation.",
-    "submit_program_decision": "Ends the episode and scores the final PET remediation recommendation.",
+    "inspect_feedstock": "Checks the feedstock before spending budget.",
+    "inspect_sample": "Checks the feedstock before spending budget.",
+    "measure_crystallinity": "Checks whether PET structure limits access.",
+    "measure_contamination": "Checks whether contamination may distort the result.",
+    "estimate_particle_size": "Estimates surface area for PET access.",
+    "query_literature": "Adds background evidence before a costly step.",
+    "query_candidate_registry": "Narrows options before route-specific tests.",
+    "retrieve_candidate_families": "Narrows options before route-specific tests.",
+    "rank_candidate_systems": "Narrows options before route-specific tests.",
+    "estimate_stability_signal": "Checks whether a candidate may survive process conditions.",
+    "run_hydrolysis_assay": "Checks direct activity for the chosen route.",
+    "run_activity_assay": "Checks direct activity for the chosen route.",
+    "run_thermostability_assay": "Checks whether the route holds up at temperature.",
+    "test_pretreatment": "Checks whether pretreatment improves access.",
+    "test_cocktail": "Checks whether a combination works better.",
+    "ask_expert": "Adds expert input without hidden truth.",
+    "state_hypothesis": "Records the current public hypothesis.",
+    "finalize_recommendation": "Ends the episode and scores the final decision.",
+    "submit_program_decision": "Ends the episode and scores the final decision.",
 }
 
 
@@ -140,7 +140,7 @@ def ui_debug_enabled() -> bool:
 
 
 def redact_hidden_debug() -> str:
-    return "Hidden truth is disabled in normal demo mode to preserve the POMDP boundary."
+    return "Hidden truth is off in normal mode."
 
 
 def _walk_payload(payload: Any, *, path: str = "payload") -> Iterable[tuple[str, Any]]:
@@ -213,7 +213,7 @@ def station_map() -> list[dict[str, str]]:
 
 
 def scenario_cards() -> list[dict[str, Any]]:
-    return [dict(card) for card in _SCENARIO_CARD_DEFS]
+    return [dict(card) for card in _SCENARIO_CARD_DEFS if card.get("available", True)]
 
 
 def reward_display_label(key: str) -> str:

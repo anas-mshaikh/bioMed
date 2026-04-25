@@ -112,7 +112,7 @@ Enable judge debug mode:
 BIOMED_UI_DEBUG=true uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The cockpit is a benchmark/demo visualization layer, not a wet-lab platform. Normal mode is truth-redacted. Judge mode only works when the server debug flag is enabled. Public exports are visible replay exports by default.
+The cockpit is a demo view for the benchmark. Normal mode hides truth. Debug mode only works when the server debug flag is on. Public exports show visible replay only.
 
 ### Typed client
 

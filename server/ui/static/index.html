@@ -11,7 +11,7 @@
       <header class="topbar">
         <div>
           <div class="eyebrow">BioMed Judge Cockpit</div>
-          <h1>PET Bioremediation Replay Console</h1>
+          <h1>PET Replay</h1>
         </div>
         <div class="controls">
           <label>Seed <input id="seed-input" type="number" value="7" /></label>
@@ -30,7 +30,7 @@
           <button id="reset-btn">Reset</button>
           <button id="run-demo-btn">Run Demo</button>
           <button id="step-btn">Step</button>
-          <button id="judge-btn">Judge Mode</button>
+          <button id="judge-btn">Debug</button>
           <button id="export-json-btn">Export JSON</button>
           <button id="export-md-btn">Export Markdown</button>
         </div>
@@ -90,9 +90,9 @@
           <h2>Signals</h2>
           <div id="signal-block" class="stack"></div>
 
-          <h2>Judge Mode</h2>
+          <h2>Debug</h2>
           <pre id="judge-panel" class="judge-panel">
-Hidden truth is disabled in normal demo mode to preserve the POMDP boundary.</pre
+Hidden truth is off.</pre
           >
         </aside>
       </main>

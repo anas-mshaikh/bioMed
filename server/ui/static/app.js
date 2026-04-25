@@ -1,6 +1,10 @@
 const stateUrl = "/ui/state";
 let currentState = null;
 let currentEpisodeId = null;
+let selectedScenarioFamily = null;
+let selectedDifficulty = null;
+let selectedSeed = 7;
+let currentSessionId = window.localStorage.getItem("biomed-ui-session-id") || null;
 
 const el = (id) => document.getElementById(id);
 
@@ -37,6 +41,7 @@ function formatNumber(value) {
 
 function renderScenarioSelect(cards) {
   const select = el("scenario-select");
+  const preferred = selectedScenarioFamily || select.value || null;
   select.innerHTML = "";
   cards.forEach((card) => {
     const option = document.createElement("option");
@@ -45,9 +50,12 @@ function renderScenarioSelect(cards) {
     option.disabled = card.available === false;
     select.appendChild(option);
   });
-  if (!select.value && cards.length) {
+  if (preferred && cards.some((card) => card.scenario_family === preferred)) {
+    select.value = preferred;
+  } else if (cards.length) {
     select.value = cards.find((card) => card.available !== false)?.scenario_family || cards[0].scenario_family;
   }
+  selectedScenarioFamily = select.value || null;
 }
 
 function renderScenarioCards(cards) {
@@ -59,7 +67,7 @@ function renderScenarioCards(cards) {
     node.innerHTML = `
       <div class="card-title">
         <strong>${escapeHtml(card.title)}</strong>
-        <span class="pill">${card.available ? "available" : "coming soon"}</span>
+        <span class="pill">${card.available ? "ready" : "off"}</span>
       </div>
       <div class="muted">${escapeHtml(card.subtitle || "")}</div>
       <p>${escapeHtml(card.description || "")}</p>
@@ -165,7 +173,7 @@ function renderReward(snapshot, rewardLabels) {
   if (!rows.length) {
     const node = document.createElement("div");
     node.className = "bar";
-    node.innerHTML = `<div class="muted">Reward breakdown unavailable for this step.</div>`;
+    node.innerHTML = `<div class="muted">No reward data for this step.</div>`;
     root.appendChild(node);
     return;
   }
@@ -255,9 +263,9 @@ function renderActionBuilder(snapshot) {
   if (!legal.length) {
     const option = document.createElement("option");
     option.value = "";
-    option.textContent = "No legal actions";
+    option.textContent = "No action";
     select.appendChild(option);
-    form.innerHTML = `<div class="muted">No legal actions available.</div>`;
+    form.innerHTML = `<div class="muted">No action available.</div>`;
     el("step-btn").disabled = true;
     return;
   }
@@ -279,15 +287,15 @@ function renderActionForm(actionKind, snapshot) {
   const fields = [];
 
   const commonFields = `
-    <label>Rationale <textarea id="action-rationale" rows="3">${escapeHtml(
-      actionKind ? `Chose ${actionKind} based on the current visible evidence.` : ""
+    <label>Reason <textarea id="action-rationale" rows="3">${escapeHtml(
+      actionKind ? `I chose ${actionKind} from the visible evidence.` : ""
     )}</textarea></label>
     <label>Confidence <input id="action-confidence" type="number" min="0" max="1" step="0.05" value="0.75" /></label>
   `;
 
   switch (actionKind) {
     case "query_literature":
-      fields.push(`<label>Query focus <input id="query-focus" type="text" value="PET bioremediation" /></label>`);
+      fields.push(`<label>Query <input id="query-focus" type="text" value="PET bioremediation" /></label>`);
       break;
     case "query_candidate_registry":
       fields.push(`<label>Family hint
@@ -320,10 +328,10 @@ function renderActionForm(actionKind, snapshot) {
           <option value="cost_reviewer">cost_reviewer</option>
         </select>
       </label>`);
-      fields.push(`<label>Question <input id="expert-question" type="text" placeholder="What next?" /></label>`);
+      fields.push(`<label>Question <input id="expert-question" type="text" placeholder="Next step" /></label>`);
       break;
     case "state_hypothesis":
-      fields.push(`<label>Hypothesis <textarea id="hypothesis" rows="3">The current evidence suggests a route-level bottleneck.</textarea></label>`);
+      fields.push(`<label>Hypothesis <textarea id="hypothesis" rows="3">The evidence suggests a route bottleneck.</textarea></label>`);
       break;
     case "finalize_recommendation":
       fields.push(`<label>Bottleneck
@@ -350,7 +358,7 @@ function renderActionForm(actionKind, snapshot) {
           <option value="no_go">no_go</option>
         </select>
       </label>`);
-      fields.push(`<label>Summary <textarea id="final-summary" rows="3">Evidence supports the selected route.</textarea></label>`);
+      fields.push(`<label>Summary <textarea id="final-summary" rows="3">The evidence supports this route.</textarea></label>`);
       fields.push(`<label>Evidence IDs <input id="evidence-ids" type="text" value="${escapeHtml(
         (snapshot?.artifacts || []).map((item) => item.artifact_id).join(", ")
       )}" /></label>`);
@@ -413,8 +421,13 @@ function actionPayloadFromForm(actionKind) {
 }
 
 async function fetchJson(url, options = {}) {
+  const headers = {
+    "Content-Type": "application/json",
+    ...(currentSessionId ? { "x-biomed-session-id": currentSessionId } : {}),
+    ...(options.headers || {}),
+  };
   const response = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers,
     ...options,
   });
   const contentType = response.headers.get("content-type") || "";
@@ -422,6 +435,10 @@ async function fetchJson(url, options = {}) {
   if (!response.ok) {
     const detail = typeof body === "string" ? body : body.detail || JSON.stringify(body);
     throw new Error(detail || response.statusText);
+  }
+  if (body && typeof body === "object" && typeof body.session_id === "string" && body.session_id) {
+    currentSessionId = body.session_id;
+    window.localStorage.setItem("biomed-ui-session-id", currentSessionId);
   }
   return body;
 }
@@ -453,6 +470,12 @@ function renderState(state) {
 async function refreshState() {
   try {
     const state = await fetchJson(stateUrl);
+    if (state?.session_id) {
+      currentSessionId = state.session_id;
+      window.localStorage.setItem("biomed-ui-session-id", currentSessionId);
+    }
+    selectedScenarioFamily = selectedScenarioFamily || state?.current_episode?.scenario_family || null;
+    selectedDifficulty = selectedDifficulty || state?.current_episode?.difficulty || null;
     renderState(state);
   } catch (error) {
     showBanner(error.message || String(error), "bad");
@@ -461,9 +484,9 @@ async function refreshState() {
 
 async function doReset() {
   const body = {
-    seed: Number(el("seed-input").value || 0),
-    scenario_family: el("scenario-select").value || null,
-    difficulty: el("difficulty-select").value || null,
+    seed: Number(el("seed-input").value || selectedSeed || 0),
+    scenario_family: selectedScenarioFamily || el("scenario-select").value || null,
+    difficulty: selectedDifficulty || el("difficulty-select").value || null,
   };
   try {
     await fetchJson("/ui/demo/reset", { method: "POST", body: JSON.stringify(body) });
@@ -489,9 +512,9 @@ async function doRunBaseline() {
   const body = {
     policy_name: "characterize_first",
     max_steps: 10,
-    seed: Number(el("seed-input").value || 0),
-    scenario_family: el("scenario-select").value || null,
-    difficulty: el("difficulty-select").value || null,
+    seed: Number(el("seed-input").value || selectedSeed || 0),
+    scenario_family: selectedScenarioFamily || el("scenario-select").value || null,
+    difficulty: selectedDifficulty || el("difficulty-select").value || null,
   };
   try {
     await fetchJson("/ui/demo/run-baseline", { method: "POST", body: JSON.stringify(body) });
@@ -503,7 +526,7 @@ async function doRunBaseline() {
 
 async function doJudgeMode() {
   if (!currentEpisodeId) {
-    showBanner("No episode recorded yet.", "bad");
+    showBanner("No episode yet.", "bad");
     return;
   }
   const panel = el("judge-panel");
@@ -511,7 +534,7 @@ async function doJudgeMode() {
     const data = await fetchJson(`/ui/episodes/${encodeURIComponent(currentEpisodeId)}/debug`);
     panel.textContent = JSON.stringify(data, null, 2);
   } catch (error) {
-    panel.textContent = "Hidden truth is disabled in normal demo mode to preserve the POMDP boundary.";
+    panel.textContent = "Hidden truth is off.";
     showBanner(error.message || String(error), "warn");
   }
 }
@@ -526,11 +549,22 @@ document.addEventListener("DOMContentLoaded", async () => {
   el("action-select").addEventListener("change", (event) => {
     renderActionForm(event.target.value, currentState?.current_snapshot);
   });
+  el("scenario-select").addEventListener("change", (event) => {
+    selectedScenarioFamily = event.target.value || null;
+  });
+  el("difficulty-select").addEventListener("change", (event) => {
+    selectedDifficulty = event.target.value || null;
+  });
+  el("seed-input").addEventListener("change", (event) => {
+    selectedSeed = Number(event.target.value || 0);
+  });
   el("reset-btn").addEventListener("click", doReset);
   el("step-btn").addEventListener("click", doStep);
   el("run-demo-btn").addEventListener("click", doRunBaseline);
   el("judge-btn").addEventListener("click", doJudgeMode);
   el("export-json-btn").addEventListener("click", () => exportEpisode("json"));
   el("export-md-btn").addEventListener("click", () => exportEpisode("md"));
+  selectedSeed = Number(el("seed-input").value || 7);
+  selectedDifficulty = el("difficulty-select").value || null;
   await refreshState();
 });
