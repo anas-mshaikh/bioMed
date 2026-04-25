@@ -10,7 +10,13 @@ from openenv.core.env_server import create_fastapi_app
 from pydantic import BaseModel, ConfigDict
 import uvicorn
 
-from biomed_models import BioMedAction, BioMedObservation, BioMedVisibleState
+from biomed_models import (
+    BioMedAction,
+    BioMedObservation,
+    BioMedVisibleState,
+    Difficulty,
+    ScenarioFamily,
+)
 from server.bioMed_environment import BioMedEnvironment
 
 
@@ -122,8 +128,8 @@ class ResetRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     seed: int | None = None
-    scenario_family: str | None = None
-    difficulty: str | None = None
+    scenario_family: ScenarioFamily | None = None
+    difficulty: Difficulty | None = None
 
 
 class StepResponse(BaseModel):
@@ -155,6 +161,7 @@ app.router.routes = [
 )
 async def get_canonical_schemas() -> dict[str, object]:
     return {
+        "reset": ResetRequest.model_json_schema(),
         "action": BioMedAction.model_json_schema(),
         "observation": BioMedObservation.model_json_schema(),
         "state": BioMedVisibleState.model_json_schema(),
@@ -171,8 +178,8 @@ async def reset_environment(request: ResetRequest) -> StepResponse:
     env = environment_factory()
     observation = env.reset(
         seed=request.seed,
-        scenario_family=request.scenario_family,
-        difficulty=request.difficulty,
+        scenario_family=request.scenario_family.value if request.scenario_family else None,
+        difficulty=request.difficulty.value if request.difficulty else None,
     )
     return StepResponse(observation=observation, reward=None, done=bool(observation.done))
 

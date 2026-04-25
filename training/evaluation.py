@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,6 @@ from biomed_models import (
 from .trajectory import Trajectory, TrajectoryDataset
 from biomed_models.semantics import (
     action_sequence_follows_expert_guidance,
-    recommendation_follows_expert_guidance,
 )
 
 
@@ -154,9 +154,39 @@ def _all_actions(traj: Trajectory) -> list[str]:
     return [str(step.action.get("action_kind", "")) for step in traj.steps if step.action]
 
 
+_WORKFLOW_CATEGORIES: dict[str, str] = {
+    "inspect_feedstock": "sample_characterization",
+    "measure_crystallinity": "sample_characterization",
+    "measure_contamination": "sample_characterization",
+    "estimate_particle_size": "sample_characterization",
+    "query_literature": "literature_registry_search",
+    "query_candidate_registry": "literature_registry_search",
+    "estimate_stability_signal": "literature_registry_search",
+    "run_hydrolysis_assay": "assay_evidence",
+    "run_thermostability_assay": "assay_evidence",
+    "test_pretreatment": "assay_evidence",
+    "test_cocktail": "assay_evidence",
+    "ask_expert": "expert_consultation",
+    "state_hypothesis": "hypothesis",
+    "finalize_recommendation": "final_recommendation",
+}
+
+
 def _trajectory_action_diversity(traj: Trajectory) -> float:
-    actions = {action for action in _all_actions(traj) if action}
-    return len(actions) / max(float(len(ACTION_KIND_VALUES)), 1.0)
+    actions = [action for action in _all_actions(traj) if action]
+    if not actions:
+        return 0.0
+
+    category_counts = Counter(
+        category for action in actions if (category := _WORKFLOW_CATEGORIES.get(action))
+    )
+    covered_categories = len(category_counts)
+    coverage = covered_categories / 6.0
+
+    repeated_actions = sum(max(0, count - 1) for count in Counter(actions).values())
+    filler_penalty = min(0.5, repeated_actions / max(len(actions), 1) * 0.5)
+
+    return max(0.0, coverage - filler_penalty)
 
 
 def _reward_component_mean(traj: Trajectory, name: str) -> float:
@@ -190,7 +220,8 @@ def _obs_dict(value: Any) -> dict[str, Any]:
 
 def _extract_expert_hint(step: Any) -> str | None:
     observation = _obs_dict(getattr(step, "observation", {}))
-    return structured_expert_guidance_from_observation(observation)
+    hint = structured_expert_guidance_from_observation(observation)
+    return hint.value if hint is not None else None
 
 
 def _expert_hint_was_followed(traj: Trajectory, idx: int, hint: str | None) -> bool:
@@ -203,15 +234,9 @@ def _expert_hint_was_followed(traj: Trajectory, idx: int, hint: str | None) -> b
         if isinstance(step.action, dict)
     ]
 
-    recommendation = _finalize_parameters(traj)
-
     return action_sequence_follows_expert_guidance(
         guidance=hint,
         action_kinds=future_actions,
-    ) or recommendation_follows_expert_guidance(
-        guidance=hint,
-        recommended_family=recommendation.get("recommended_family"),
-        decision_type=recommendation.get("decision_type"),
     )
 
 
@@ -281,18 +306,19 @@ def extract_truth_summary_from_latent(latent: Any) -> dict[str, Any]:
     }
 
 
-def classify_success(traj: Trajectory, truth_summary: dict[str, Any] | None = None) -> bool:
+def classify_success(traj: Trajectory, truth_summary: dict[str, Any] | None = None) -> bool | None:
     has_final_recommendation = _has_final_recommendation(traj)
     recommendation = _finalize_parameters(traj)
-    bottleneck_match = _alias_match(
-        _extract_predicted_bottleneck(traj),
-        (truth_summary or _truth_summary(traj)).get("true_bottleneck"),
-    )
-    family_match = _alias_match(
-        _extract_predicted_family(traj),
-        (truth_summary or _truth_summary(traj)).get("best_intervention_family"),
-    )
-    truth_family = (truth_summary or _truth_summary(traj)).get("best_intervention_family")
+    truth = _truth_summary(traj, truth_summary)
+    if not truth:
+        return None
+
+    _validate_truth_summary_payload(truth, episode_id=traj.episode_id)
+
+    truth_bottleneck = truth.get("true_bottleneck")
+    truth_family = truth.get("best_intervention_family")
+    bottleneck_match = _alias_match(_extract_predicted_bottleneck(traj), truth_bottleneck)
+    family_match = _alias_match(_extract_predicted_family(traj), truth_family)
     stop_match = 0.0
     if truth_family and has_final_recommendation:
         if truth_family == "no_go":
@@ -334,6 +360,7 @@ class BioMedEvaluationSuite:
         metric_keys = tuple(ONLINE_METRIC_KEYS)
         returns = [t.total_reward for t in trajectories]
         lengths = [float(t.num_steps) for t in trajectories]
+        known_successes = [t.success for t in trajectories if t.success is not None]
         successes_known = [1.0 if t.success else 0.0 for t in trajectories if t.success is not None]
 
         if not trajectories:
@@ -345,6 +372,7 @@ class BioMedEvaluationSuite:
             "std_return": _std(returns),
             "mean_episode_length": _mean(lengths),
             "success_rate": _mean(successes_known),
+            "success_known_fraction": len(known_successes) / len(trajectories),
         }
         _validate_metric_schema(metrics, metric_keys, label="online")
         return metrics
@@ -361,7 +389,7 @@ class BioMedEvaluationSuite:
                 "A trajectory step is missing reward_breakdown; benchmark metrics are not trustworthy."
             )
 
-        no_hard_violation_episodes = []
+        workflow_validity_episodes = []
         ordering_scores = []
         action_diversity_scores = []
         confidences = []
@@ -369,7 +397,8 @@ class BioMedEvaluationSuite:
         family_scores = []
         stop_scores = []
         info_per_cost_values = []
-        expert_scores = []
+        expert_scores: list[float] = []
+        expert_known_episode_count = 0
         hard_violation_steps = 0
         soft_violation_steps = 0
         total_steps = 0
@@ -380,9 +409,12 @@ class BioMedEvaluationSuite:
                 raise ValueError(
                     f"Missing private truth sidecar for episode_id={traj.episode_id!r}; benchmark metrics are not trustworthy."
                 )
+            if "truth_summary" in truth and isinstance(truth.get("truth_summary"), dict):
+                truth = truth["truth_summary"]
             _validate_truth_summary_payload(truth, episode_id=traj.episode_id)
             finalize_params = _finalize_parameters(traj, strict=True)
             hard_episode_count = 0
+            soft_episode_count = 0
             info_gain_total = 0.0
             expert_uses = 0
             expert_useful = 0
@@ -396,16 +428,22 @@ class BioMedEvaluationSuite:
                 soft_violation_steps += soft_count
                 if hard_count > 0:
                     hard_episode_count += hard_count
+                if soft_count > 0:
+                    soft_episode_count += soft_count
 
                 info_gain_total += float(step.reward_breakdown.get("info_gain", 0.0) or 0.0)
 
                 if str(step.action.get("action_kind", "")) == "ask_expert":
-                    expert_uses += 1
                     hint = _extract_expert_hint(step)
-                    if hint is not None and _expert_hint_was_followed(traj, idx, hint):
+                    if hint is None:
+                        continue
+                    expert_uses += 1
+                    if _expert_hint_was_followed(traj, idx, hint):
                         expert_useful += 1
 
-            no_hard_violation_episodes.append(1.0 if hard_episode_count == 0 else 0.0)
+            workflow_validity_episodes.append(
+                1.0 if (hard_episode_count == 0 and soft_episode_count == 0) else 0.0
+            )
             ordering_scores.append(_reward_component_mean(traj, "ordering"))
             confidences.append(_last_confidence(traj))
 
@@ -444,12 +482,21 @@ class BioMedEvaluationSuite:
 
             visible_state = _last_visible_state(traj)
             spent_budget = float(visible_state.get("spent_budget", 0.0) or 0.0)
+            initial_budget = float(visible_state.get("budget_total", 0.0) or 0.0)
             spent_time = float(visible_state.get("spent_time_days", 0.0) or 0.0)
-            info_per_cost_values.append(info_gain_total / max(spent_budget + spent_time, 1.0))
-            expert_scores.append((expert_useful / expert_uses) if expert_uses else 0.0)
+            initial_time = float(visible_state.get("time_total_days", 0.0) or 0.0)
+            normalized_cost = 0.0
+            if initial_budget > 0.0:
+                normalized_cost += spent_budget / initial_budget
+            if initial_time > 0.0:
+                normalized_cost += spent_time / initial_time
+            info_per_cost_values.append(info_gain_total / max(normalized_cost, 1e-9))
+            if expert_uses:
+                expert_scores.append(expert_useful / expert_uses)
+                expert_known_episode_count += 1
 
         metrics = {
-            "workflow_validity_rate": _mean(no_hard_violation_episodes),
+            "workflow_validity_rate": _mean(workflow_validity_episodes),
             "ordering_score": _mean(ordering_scores),
             "action_diversity": _mean(action_diversity_scores),
             "mean_conclusion_confidence": _mean(confidences),
@@ -458,6 +505,9 @@ class BioMedEvaluationSuite:
             "stop_go_accuracy": _mean(stop_scores),
             "info_per_cost": _mean(info_per_cost_values),
             "expert_usefulness_score": _mean(expert_scores),
+            "expert_usefulness_known_fraction": (
+                expert_known_episode_count / len(trajectories)
+            ),
             "hard_violation_rate": (hard_violation_steps / total_steps) if total_steps else 0.0,
             "soft_violation_rate": (soft_violation_steps / total_steps) if total_steps else 0.0,
         }

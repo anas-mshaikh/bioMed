@@ -11,6 +11,7 @@ from biomed_models import (
     InterventionFamily,
 )
 from training.evaluation import BioMedEvaluationSuite
+from training.evaluation import classify_success
 from training.trajectory import Trajectory, TrajectoryDataset
 
 
@@ -65,6 +66,12 @@ def test_final_action_confidence_is_top_level_metric_source() -> None:
     assert metrics["benchmark"]["mean_conclusion_confidence"] == pytest.approx(0.83)
 
 
+def test_classify_success_returns_none_without_truth() -> None:
+    trajectory = _finalized_trajectory()
+    assert BioMedEvaluationSuite.online_metrics([trajectory])["success_known_fraction"] == pytest.approx(0.0)
+    assert classify_success(trajectory, truth_summary=None) is None
+
+
 def test_benchmark_metrics_require_truth_sidecar() -> None:
     dataset = TrajectoryDataset([_finalized_trajectory()])
 
@@ -95,6 +102,7 @@ def test_online_success_rate_uses_explicit_success_only() -> None:
     unknown.success = None
     metrics = BioMedEvaluationSuite.online_metrics([known, unknown])
     assert metrics["success_rate"] == pytest.approx(1.0)
+    assert metrics["success_known_fraction"] == pytest.approx(0.5)
 
 
 def test_benchmark_metrics_reject_malformed_truth_sidecar_payload() -> None:

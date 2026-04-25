@@ -179,17 +179,39 @@ def _write_outputs(
 
     dataset_path = rollouts_dir / f"{policy_name}.jsonl"
     truth_sidecar_path = private_dir / f"{policy_name}_truth.json"
-    dataset.save_jsonl(dataset_path, truth_sidecar_path=truth_sidecar_path)
+    benchmark_metrics_available = bool(dataset._benchmark_truth_sidecar)
+    dataset.save_jsonl(
+        dataset_path,
+        truth_sidecar_path=truth_sidecar_path if benchmark_metrics_available else None,
+    )
 
     summary = dataset.summary()
-    metrics = BioMedEvaluationSuite.evaluate_dataset(dataset).to_dict()
+    metrics_payload: dict[str, Any] = {
+        "online": BioMedEvaluationSuite.online_metrics(dataset.trajectories),
+        "benchmark": {},
+        "by_scenario_family": {},
+        "benchmark_metrics_available": benchmark_metrics_available,
+    }
+    if benchmark_metrics_available:
+        metrics_payload.update(BioMedEvaluationSuite.evaluate_dataset(dataset).to_dict())
 
     (evals_dir / f"{policy_name}_dataset_summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
     (evals_dir / f"{policy_name}_metrics.json").write_text(
-        json.dumps(metrics, indent=2, ensure_ascii=False),
+        json.dumps(metrics_payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (evals_dir / f"{policy_name}_metrics_status.json").write_text(
+        json.dumps(
+            {
+                "benchmark_metrics_available": benchmark_metrics_available,
+                "truth_sidecar_written": benchmark_metrics_available,
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
 
@@ -231,6 +253,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=10)
     parser.add_argument("--seed-start", type=int, default=1000)
     parser.add_argument("--capture-latent-truth", action="store_true", default=False)
+    parser.add_argument(
+        "--require-benchmark-metrics",
+        action="store_true",
+        default=False,
+        help="Require private truth so benchmark metrics can be produced.",
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("outputs"))
     parser.add_argument("--replay-limit", type=int, default=5)
     return parser.parse_args()
@@ -250,6 +278,11 @@ def main() -> None:
         capture_latent_truth=args.capture_latent_truth,
     )
 
+    if args.require_benchmark_metrics and not dataset._benchmark_truth_sidecar:
+        raise RuntimeError(
+            "--require-benchmark-metrics was set, but no private truth sidecar was produced."
+        )
+
     _write_outputs(
         dataset=dataset,
         output_dir=args.output_dir,
@@ -258,10 +291,22 @@ def main() -> None:
     )
 
     summary = dataset.summary()
-    metrics = BioMedEvaluationSuite.evaluate_dataset(dataset).to_dict()
+    if dataset._benchmark_truth_sidecar:
+        metrics_payload = BioMedEvaluationSuite.evaluate_dataset(dataset).to_dict()
+    else:
+        metrics_payload = {
+            "online": BioMedEvaluationSuite.online_metrics(dataset.trajectories),
+            "benchmark": {},
+            "by_scenario_family": {},
+            "benchmark_metrics_available": False,
+        }
 
     print(
-        json.dumps({"dataset_summary": summary, "metrics": metrics}, indent=2, ensure_ascii=False)
+        json.dumps(
+            {"dataset_summary": summary, "metrics": metrics_payload},
+            indent=2,
+            ensure_ascii=False,
+        )
     )
 
 

@@ -34,6 +34,8 @@ def test_rollout_collection_keeps_truth_in_sidecar_only() -> None:
 
     assert trajectory.steps
     assert trajectory.steps[0].legal_next_actions[0]["action_kind"]
+    assert "scenario_family" not in public_payload
+    assert "difficulty" not in public_payload
     assert "benchmark_truth" not in public_payload.get("metadata", {})
     assert dataset.benchmark_truth_sidecar()[trajectory.episode_id]["true_bottleneck"]
 
@@ -49,6 +51,7 @@ def test_rollout_collection_respects_capture_latent_truth_flag() -> None:
         capture_latent_truth=False,
     )
     assert dataset.benchmark_truth_sidecar() == {}
+    assert dataset.trajectories[0].success is None
 
 
 def test_baseline_policy_emits_canonical_action_objects(fresh_env) -> None:

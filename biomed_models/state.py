@@ -15,8 +15,9 @@ class BioMedVisibleState(State):
     step_count: int = Field(default=0, ge=0)
     stage: Stage = Stage.INTAKE
     spent_budget: float = Field(default=0.0, ge=0.0)
+    budget_total: float = Field(default=0.0, ge=0.0)
     spent_time_days: int = Field(default=0, ge=0)
+    time_total_days: int = Field(default=0, ge=0)
     completed_milestones: list[str] = Field(default_factory=list)
     history_length: int = Field(default=0, ge=0)
     schema_version: Literal["biomed_v2"] = SCHEMA_VERSION
-

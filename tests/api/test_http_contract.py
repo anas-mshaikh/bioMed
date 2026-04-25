@@ -44,6 +44,25 @@ def test_invalid_legacy_payloads_fail_with_422(client, reset_session) -> None:
     assert extra.status_code == 422
 
 
+def test_reset_rejects_invalid_enum_and_extra_fields_with_422(client) -> None:
+    invalid_enum = client.post(
+        "/reset",
+        json={"seed": 7, "scenario_family": "not_a_family", "difficulty": "easy"},
+    )
+    extra_field = client.post(
+        "/reset",
+        json={
+            "seed": 7,
+            "scenario_family": "high_crystallinity",
+            "difficulty": "easy",
+            "unexpected": True,
+        },
+    )
+
+    assert invalid_enum.status_code == 422
+    assert extra_field.status_code == 422
+
+
 def test_well_typed_but_illegal_actions_block_without_state_mutation(client, reset_session) -> None:
     before = client.get("/state", headers=reset_session)
     blocked = client.post(

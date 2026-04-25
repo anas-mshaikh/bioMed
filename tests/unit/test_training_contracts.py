@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from training.parsing import parse_tool_call
-from training.trainer_script import build_prompt
+from training.trainer_script import DEFAULT_SCENARIO_FAMILIES, build_prompt
 from biomed_models.semantics import structured_expert_guidance_from_observation
 
 
@@ -20,6 +20,27 @@ def test_training_prompt_excludes_hidden_labels() -> None:
     assert "thermostability_bottleneck" not in content
     assert "contamination_artifact" not in content
     assert "no_go" not in content
+
+
+def test_default_training_families_include_no_go() -> None:
+    assert "no_go" in DEFAULT_SCENARIO_FAMILIES
+
+
+def test_parse_tool_call_accepts_rationale_and_confidence() -> None:
+    action = parse_tool_call(
+        "ask_expert",
+        {
+            "expert_id": "wet_lab_lead",
+            "question": "What should I check next?",
+            "rationale": "Need a workflow hint.",
+            "confidence": 0.7,
+            "schema_version": "biomed_v2",
+        },
+    )
+    assert action.action_kind.value == "ask_expert"
+    assert action.rationale == "Need a workflow hint."
+    assert action.confidence == 0.7
+    assert action.schema_version == "biomed_v2"
 
 
 @pytest.mark.parametrize(
@@ -68,9 +89,9 @@ def test_no_duplicate_route_family_constants_outside_canonical_layer() -> None:
 def test_structured_expert_guidance_prefers_latest_reply() -> None:
     observation = {
         "expert_inbox": [
-            {"data": {"guidance_class": "thermostable_single"}},
-            {"data": {"guidance_class": "cocktail"}},
+            {"data": {"suggested_next_action_kind": "run_thermostability_assay"}},
+            {"data": {"suggested_next_action_kind": "test_cocktail"}},
         ]
     }
     guidance = structured_expert_guidance_from_observation(observation)
-    assert guidance == "cocktail"
+    assert guidance.value == "test_cocktail"

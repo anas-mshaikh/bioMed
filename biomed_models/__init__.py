@@ -11,6 +11,17 @@ from .action_params import (
 )
 from .actions import BioMedAction, build_action
 from .artifacts import ArtifactCard, ExpertMessage, LatestOutput
+from .public_payloads import (
+    AssayOutputData,
+    BlockedOutputData,
+    CandidateRegistryOutputData,
+    CandidateSummary,
+    DecisionOutputData,
+    InspectionOutputData,
+    LiteratureOutputData,
+    ExpertReplyOutputData,
+    to_public_output_data,
+)
 from .contract import (
     ACTION_COSTS,
     ACTION_KIND_VALUES,
@@ -107,16 +118,23 @@ __all__ = [
     "EpisodeInfo",
     "ExpertId",
     "ExpertMessage",
+    "ExpertReplyOutputData",
     "ExpertQueryParams",
     "FinalRecommendationParams",
+    "InspectionOutputData",
     "HydrolysisAssayParams",
     "HypothesisParams",
     "InterventionFamily",
+    "LiteratureOutputData",
     "LatestOutput",
     "LiteratureQueryParams",
     "OnlineMetricKey",
     "OutputType",
     "Priority",
+    "BlockedOutputData",
+    "CandidateRegistryOutputData",
+    "CandidateSummary",
+    "DecisionOutputData",
     "ResourceSnapshot",
     "RewardBreakdown",
     "RewardKey",
@@ -137,5 +155,6 @@ __all__ = [
     "recommendation_has_explicit_no_go_semantics",
     "recommendation_has_explicit_stop_semantics",
     "structured_expert_guidance_from_observation",
+    "to_public_output_data",
     "terminal_recommendation_rationale",
 ]

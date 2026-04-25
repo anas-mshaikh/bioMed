@@ -72,5 +72,5 @@ def test_tool_env_uses_environment_terminal_state() -> None:
     payload = json.loads(tool_env.inspect_feedstock())
 
     assert payload["phase"] == "tool_error"
-    assert payload["done"] is False
-    assert tool_env.done is False
+    assert payload["done"] is True
+    assert tool_env.done is True

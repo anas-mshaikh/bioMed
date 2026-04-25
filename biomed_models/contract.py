@@ -120,6 +120,7 @@ class OnlineMetricKey(CanonicalStrEnum):
     STD_RETURN = "std_return"
     MEAN_EPISODE_LENGTH = "mean_episode_length"
     SUCCESS_RATE = "success_rate"
+    SUCCESS_KNOWN_FRACTION = "success_known_fraction"
 
 
 class BenchmarkMetricKey(CanonicalStrEnum):
@@ -132,6 +133,7 @@ class BenchmarkMetricKey(CanonicalStrEnum):
     STOP_GO_ACCURACY = "stop_go_accuracy"
     INFO_PER_COST = "info_per_cost"
     EXPERT_USEFULNESS_SCORE = "expert_usefulness_score"
+    EXPERT_USEFULNESS_KNOWN_FRACTION = "expert_usefulness_known_fraction"
     HARD_VIOLATION_RATE = "hard_violation_rate"
     SOFT_VIOLATION_RATE = "soft_violation_rate"
 
@@ -201,6 +203,7 @@ FORBIDDEN_PUBLIC_DATA_KEYS: frozenset[str] = frozenset(
         "knows_true_bottleneck",
         "confidence_bias",
         "preferred_focus",
+        "guidance_class",
     }
 )
 

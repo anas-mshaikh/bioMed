@@ -18,7 +18,9 @@ class EpisodeInfo(StrictModel):
 
 class ResourceSnapshot(StrictModel):
     budget_remaining: float = Field(ge=0.0)
+    budget_total: float = Field(ge=0.0)
     time_remaining_days: int = Field(ge=0)
+    time_total_days: int = Field(ge=0)
 
 
 class ActionSpec(StrictModel):
@@ -41,4 +43,3 @@ class BioMedObservation(Observation):
     warnings: list[str] = Field(default_factory=list)
     legal_next_actions: list[ActionSpec] = Field(default_factory=list)
     done_reason: str | None = None
-

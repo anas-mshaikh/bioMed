@@ -57,10 +57,12 @@ def test_trajectory_persists_canonical_legal_action_specs(tmp_path) -> None:
     sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
 
     assert payload["schema_version"] == SCHEMA_VERSION
+    assert "scenario_family" not in payload
+    assert "difficulty" not in payload
     assert payload["steps"][0]["legal_next_actions"][0]["action_kind"] == "query_candidate_registry"
     assert "latent_snapshot" not in payload["steps"][0]
     assert "benchmark_truth" not in payload.get("metadata", {})
-    assert sidecar["episode-1"]["true_bottleneck"] == "substrate_accessibility"
+    assert sidecar["episode-1"]["truth_summary"]["true_bottleneck"] == "substrate_accessibility"
 
 
 def test_trajectory_step_loader_rejects_removed_fields() -> None:

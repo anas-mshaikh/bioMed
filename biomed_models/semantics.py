@@ -73,37 +73,21 @@ def expert_guidance_followup_actions(
 
 def recommendation_follows_expert_guidance(
     *,
-    guidance: str | InterventionFamily | None,
+    guidance: str | ActionKind | None,
     recommended_family: str | InterventionFamily | None,
     decision_type: str | DecisionType | None,
 ) -> bool:
-    guidance_family = normalize_intervention_family(guidance)
-    recommendation_family = normalize_intervention_family(recommended_family)
-    decision = normalize_decision_type(decision_type)
-
-    if guidance_family is None:
-        return False
-
-    if guidance_family == InterventionFamily.NO_GO:
-        return recommendation_family == InterventionFamily.NO_GO or decision == DecisionType.NO_GO
-
-    return recommendation_family == guidance_family
+    del guidance, recommended_family, decision_type
+    return False
 
 
 def action_sequence_follows_expert_guidance(
     *,
-    guidance: str | InterventionFamily | None,
+    guidance: str | ActionKind | None,
     action_kinds: Sequence[Any],
 ) -> bool:
-    guidance_family = normalize_intervention_family(guidance)
-    if guidance_family is None:
-        return False
-
-    if guidance_family == InterventionFamily.NO_GO:
-        return False
-
-    canonical_followups = expert_guidance_followup_actions(guidance_family)
-    if not canonical_followups:
+    guidance_action = normalize_action_kind(guidance)
+    if guidance_action is None:
         return False
 
     observed_actions = {
@@ -112,7 +96,7 @@ def action_sequence_follows_expert_guidance(
         if (normalized := normalize_action_kind(action)) is not None
     }
 
-    return bool(observed_actions.intersection(canonical_followups))
+    return guidance_action in observed_actions
 
 
 def milestone_count(discoveries: Mapping[str, Any] | Any) -> int:
@@ -174,7 +158,8 @@ def action_specs(action_kinds: Sequence[ActionKind]) -> list[ActionSpec]:
 
 def structured_expert_guidance_from_observation(
     observation: Mapping[str, Any] | Any,
-) -> InterventionFamily | None:
+) -> ActionKind | None:
+    """Extract a public workflow hint from an observation, if one exists."""
     if not isinstance(observation, Mapping):
         return None
 
@@ -182,9 +167,9 @@ def structured_expert_guidance_from_observation(
     if isinstance(latest_output, Mapping):
         data = latest_output.get("data", {})
         if isinstance(data, Mapping):
-            guidance = data.get("guidance_class")
+            guidance = data.get("suggested_next_action_kind")
             if guidance is not None:
-                return _parse_intervention_family(guidance)
+                return _parse_action_kind(guidance)
 
     expert_inbox = observation.get("expert_inbox", [])
     if isinstance(expert_inbox, Sequence) and not isinstance(expert_inbox, (str, bytes, bytearray)):
@@ -193,13 +178,13 @@ def structured_expert_guidance_from_observation(
             if hasattr(item, "model_dump"):
                 dumped = item.model_dump()
                 if isinstance(dumped, Mapping):
-                    data = dumped.get("data")
+                    data = dumped.get("data", dumped)
             elif isinstance(item, Mapping):
-                data = item.get("data")
+                data = item.get("data", item)
             if isinstance(data, Mapping):
-                guidance = data.get("guidance_class")
+                guidance = data.get("suggested_next_action_kind")
                 if guidance is not None:
-                    parsed = _parse_intervention_family(guidance)
+                    parsed = _parse_action_kind(guidance)
                     if parsed is not None:
                         return parsed
     return None
@@ -231,7 +216,6 @@ def infer_true_bottleneck(
 def infer_recommendation_from_structured_signals(
     *,
     top_route: str | InterventionFamily,
-    expert_guidance_class: str | InterventionFamily | None = None,
     contamination_signal: bool = False,
     cocktail_strong: bool = False,
     pretreatment_promising: bool = False,
@@ -248,17 +232,14 @@ def infer_recommendation_from_structured_signals(
     parsed_top_route = normalize_intervention_family(top_route)
     family = parsed_top_route or InterventionFamily.THERMOSTABLE_SINGLE
 
-    parsed_expert_guidance = normalize_intervention_family(expert_guidance_class)
     bottleneck = BottleneckKind.CANDIDATE_MISMATCH
     decision_type = DecisionType.PROCEED
 
-    if parsed_expert_guidance == InterventionFamily.NO_GO or economic_no_go:
+    if economic_no_go:
         family = InterventionFamily.NO_GO
         bottleneck = BottleneckKind.NO_GO
         decision_type = DecisionType.NO_GO
     elif contamination_signal:
-        if parsed_expert_guidance in ASSAY_ROUTE_FAMILIES:
-            family = parsed_expert_guidance
         bottleneck = BottleneckKind.CONTAMINATION_ARTIFACT
         decision_type = DecisionType.PROCEED
     elif cocktail_strong:
@@ -316,8 +297,8 @@ def recommendation_has_explicit_stop_semantics(recommendation: Mapping[str, Any]
     return recommendation_has_explicit_no_go_semantics(recommendation)
 
 
-def normalize_structured_expert_guidance_class(value: Any) -> InterventionFamily | None:
-    return _parse_intervention_family(value)
+def normalize_structured_expert_guidance_class(value: Any) -> ActionKind | None:
+    return _parse_action_kind(value)
 
 
 def normalize_intervention_family(value: Any) -> InterventionFamily | None:
@@ -354,5 +335,15 @@ def _parse_intervention_family(value: Any) -> InterventionFamily | None:
     normalized = value.strip().lower()
     try:
         return InterventionFamily(normalized)
+    except ValueError:
+        return None
+
+
+def _parse_action_kind(value: Any) -> ActionKind | None:
+    normalized = normalize_action_kind(value)
+    if normalized is None:
+        return None
+    try:
+        return ActionKind(normalized)
     except ValueError:
         return None

@@ -73,7 +73,9 @@ class RuleEngine:
 
         if d.get("candidate_registry_queried", False) and d.get("activity_assay_run", False):
             legal.append(ActionKind.TEST_COCKTAIL)
-        if (
+        if self._has_economic_no_go_evidence(latent):
+            legal.append(ActionKind.FINALIZE_RECOMMENDATION)
+        elif (
             d.get("feedstock_inspected", False)
             and d.get("candidate_registry_queried", False)
             and (
@@ -318,7 +320,8 @@ class RuleEngine:
             if not d.get("candidate_registry_queried", False):
                 missing.append("candidate_registry_queried")
             if not (
-                d.get("activity_assay_run", False)
+                self._has_economic_no_go_evidence(latent)
+                or d.get("activity_assay_run", False)
                 or d.get("thermostability_assay_run", False)
                 or d.get("pretreatment_tested", False)
                 or d.get("cocktail_tested", False)
@@ -334,6 +337,23 @@ class RuleEngine:
                 ), soft
 
         return None, soft
+
+    def _has_economic_no_go_evidence(self, latent: LatentEpisodeState) -> bool:
+        d = latent.discoveries
+        shortlist = d.get("candidate_shortlist", [])
+        if not isinstance(shortlist, list) or not shortlist:
+            return False
+
+        weak_high_cost = any(
+            isinstance(item, dict)
+            and float(item.get("visible_score", 0.0) or 0.0) < 0.58
+            and str(item.get("cost_band", "")).lower() == "high"
+            for item in shortlist
+        )
+        has_cost_reviewer = any(
+            str(key).startswith("expert_reply:cost_reviewer") for key in d
+        )
+        return bool(d.get("candidate_registry_queried", False) and weak_high_cost and has_cost_reviewer)
 
     def _check_redundancy(
         self,

@@ -12,9 +12,11 @@ from biomed_models import (
     EpisodeInfo,
     ExpertMessage,
     LatestOutput,
+    OutputType,
     ResourceSnapshot,
     action_specs,
     completed_canonical_milestones,
+    to_public_output_data,
 )
 from server.rules.types import RuleDecision
 from server.simulator.latent_models import LatentEpisodeState
@@ -116,7 +118,9 @@ def _build_visible_state(state: LatentEpisodeState) -> BioMedVisibleState:
         step_count=state.step_count,
         stage=state.progress.stage,
         spent_budget=round(state.resources.budget_spent, 2),
+        budget_total=round(state.resources.budget_total, 2),
         spent_time_days=state.resources.time_spent_days,
+        time_total_days=state.resources.time_total_days,
         completed_milestones=completed_canonical_milestones(state.progress.completed_milestones),
         history_length=len(state.history),
     )
@@ -137,7 +141,7 @@ def _build_latest_output(effect: TransitionEffect | None) -> LatestOutput | None
         uncertainty=effect.uncertainty
         if effect.uncertainty is not None
         else _quality_to_uncertainty(effect.quality_score),
-        data=_sanitize_public_payload(dict(effect.data)),
+        data=to_public_output_data(OutputType(effect.effect_type), dict(effect.data)),
     )
 
 
@@ -157,6 +161,8 @@ def _expert_message_from_transition_reply(item: TransitionExpertReply) -> Expert
         summary=item.summary,
         confidence=item.confidence,
         priority=item.priority,
+        suggested_next_action_kind=item.suggested_next_action_kind,
+        data=to_public_output_data(OutputType.EXPERT_REPLY, dict(item.data)),
     )
 
 
@@ -172,7 +178,9 @@ def _build_invalid_action_observation(
         stage=_stage_label(state),
         resources=ResourceSnapshot(
             budget_remaining=round(state.resources.budget_remaining, 2),
+            budget_total=round(state.resources.budget_total, 2),
             time_remaining_days=state.resources.time_remaining_days,
+            time_total_days=state.resources.time_total_days,
         ),
         latest_output=None,
         artifacts=_sort_artifacts(_build_artifacts_from_discoveries(state)),
@@ -482,17 +490,15 @@ def _build_expert_inbox_from_discoveries(state: LatentEpisodeState) -> list[Expe
         if not isinstance(confidence, (int, float)):
             confidence = None
 
-        public_data = _sanitize_public_payload(dict(value))
-        if isinstance(public_data, dict):
-            public_data.pop("confidence", None)
-            public_data.pop("preferred_focus", None)
+        public_data = to_public_output_data(OutputType.EXPERT_REPLY, dict(value))
 
         messages.append(
             ExpertMessage(
                 expert_id=expert_id,
                 summary=summary,
                 confidence=confidence,
-                priority="medium",
+                priority=public_data.get("priority", "medium"),
+                suggested_next_action_kind=public_data.get("suggested_next_action_kind"),
                 data=public_data,
             )
         )
@@ -538,7 +544,9 @@ class BioMedObservationBuilder:
             stage=_stage_label(state),
             resources=ResourceSnapshot(
                 budget_remaining=round(state.resources.budget_remaining, 2),
+                budget_total=round(state.resources.budget_total, 2),
                 time_remaining_days=state.resources.time_remaining_days,
+                time_total_days=state.resources.time_total_days,
             ),
             latest_output=None,
             artifacts=_sort_artifacts(_build_artifacts_from_discoveries(state)),
@@ -587,7 +595,9 @@ class BioMedObservationBuilder:
             stage=_stage_label(state),
             resources=ResourceSnapshot(
                 budget_remaining=round(state.resources.budget_remaining, 2),
+                budget_total=round(state.resources.budget_total, 2),
                 time_remaining_days=state.resources.time_remaining_days,
+                time_total_days=state.resources.time_total_days,
             ),
             latest_output=_build_latest_output(effect),
             artifacts=artifacts,

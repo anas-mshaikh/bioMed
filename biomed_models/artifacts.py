@@ -5,7 +5,7 @@ from typing import Any
 from pydantic import ConfigDict, Field, field_validator
 
 from .action_params import StrictModel
-from .contract import ArtifactType, ExpertId, OutputType, Priority
+from .contract import ActionKind, ArtifactType, ExpertId, OutputType, Priority
 
 
 def _ensure_probability(value: float | None, field_name: str) -> None:
@@ -49,6 +49,7 @@ class ExpertMessage(StrictModel):
     summary: str = Field(min_length=1)
     confidence: float | None = None
     priority: Priority = Priority.MEDIUM
+    suggested_next_action_kind: ActionKind | None = None
     data: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("confidence")
@@ -56,4 +57,3 @@ class ExpertMessage(StrictModel):
     def validate_confidence(cls, value: float | None) -> float | None:
         _ensure_probability(value, "confidence")
         return value
-

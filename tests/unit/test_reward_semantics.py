@@ -111,14 +111,18 @@ def _terminal_reward_engine() -> TerminalRewardEngine:
                 {
                     "feedstock_inspected": True,
                     "candidate_registry_queried": True,
-                    "expert_reply:wet_lab_lead": {"guidance_class": "thermostable_single"},
+                    "expert_reply:wet_lab_lead": {
+                        "suggested_next_action_kind": "run_thermostability_assay"
+                    },
                 }
             ),
             _state(
                 {
                     "feedstock_inspected": True,
                     "candidate_registry_queried": True,
-                    "expert_reply:wet_lab_lead": {"guidance_class": "cocktail"},
+                    "expert_reply:wet_lab_lead": {
+                        "suggested_next_action_kind": "test_cocktail"
+                    },
                 }
             ),
         ),
@@ -392,7 +396,9 @@ def test_no_go_cost_realism_requires_economic_justification() -> None:
     supported_state = _state(
         {
             "candidate_registry_queried": True,
-            "expert_reply:cost_reviewer": {"guidance_class": "no_go"},
+            "expert_reply:cost_reviewer": {
+                "suggested_next_action_kind": "query_candidate_registry"
+            },
             "candidate_shortlist": [
                 {"candidate_family": "thermostable_single", "visible_score": 0.42, "cost_band": "high"}
             ],

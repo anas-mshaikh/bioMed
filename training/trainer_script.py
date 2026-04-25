@@ -23,6 +23,7 @@ DEFAULT_SCENARIO_FAMILIES = [
     "high_crystallinity",
     "thermostability_bottleneck",
     "contamination_artifact",
+    "no_go",
 ]
 
 
@@ -347,16 +348,18 @@ def run_dry_run(config: BioMedTrainingConfig, dataset: Dataset, out_dir: Path) -
         difficulty=sample["difficulty"],
     )
 
-    smoke_tool_output: str | None = None
     smoke_error: str | None = None
     smoke_action = BioMedAction(action_kind=ActionKind.INSPECT_FEEDSTOCK)
+    smoke_step_result: dict[str, Any] | None = None
 
     try:
-        if hasattr(env, "inspect_feedstock"):
-            smoke_tool_output = env.inspect_feedstock(
-                rationale="dry-run smoke test",
-                confidence=0.25,
-            )
+        step_result = env.step(smoke_action)
+        smoke_step_result = {
+            "observation": step_result.observation.model_dump(mode="json"),
+            "reward": getattr(step_result, "reward", None),
+            "done": getattr(step_result, "done", None),
+            "rule_code": getattr(step_result, "rule_code", None),
+        }
     except Exception as exc:  # pragma: no cover - useful for local debugging
         smoke_error = f"{type(exc).__name__}: {exc}"
 
@@ -368,7 +371,7 @@ def run_dry_run(config: BioMedTrainingConfig, dataset: Dataset, out_dir: Path) -
         "public_tools": discover_public_tools(env_factory),
         "initial_observation": initial_observation,
         "smoke_action": smoke_action.model_dump(mode="json"),
-        "smoke_tool_output": smoke_tool_output,
+        "smoke_step_result": smoke_step_result,
         "smoke_error": smoke_error,
         "reward_after_smoke_call": float(getattr(env, "reward", 0.0)),
         "done_after_smoke_call": bool(getattr(env, "done", False)),

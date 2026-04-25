@@ -66,6 +66,7 @@ class BioMedToolEnvConfig:
     invalid_tool_call_penalty: float = -1.0
     reward_clip_min: float = -2.0
     reward_clip_max: float = 2.0
+    clip_training_reward: bool = False
 
     system_preamble: str = (
         "You are operating inside BioMed, a PET bioremediation benchmark. "
@@ -100,6 +101,7 @@ class BioMedToolEnv:
         self._last_step_result: Any | None = None
         self.reward = 0.0
         self.last_step_reward = 0.0
+        self.raw_reward = 0.0
         self.done = False
         self.step_count = 0
         self.active_seed: int | None = None
@@ -113,6 +115,7 @@ class BioMedToolEnv:
         self._backend = self._create_backend()
         self.reward = 0.0
         self.last_step_reward = 0.0
+        self.raw_reward = 0.0
         self.done = False
         self.step_count = 0
 
@@ -177,7 +180,7 @@ class BioMedToolEnv:
     ) -> str:
         """Query the candidate registry for potential intervention families.
         Args:
-        family_hint: Optional hint to filter candidate families by a specific trait (e.g., "high_crystallinity"). Should be one of the canonical InterventionFamily enum values or None for no filtering.
+        family_hint: Optional hint to filter candidate families by a canonical InterventionFamily enum value or None for no filtering.
         rationale: Short reason for choosing this query now.
         confidence: Confidence from 0.0 to 1.0.
         """
@@ -282,7 +285,15 @@ class BioMedToolEnv:
         rationale: str | None = None,
         confidence: float | None = None,
     ) -> str:
-        """Make a final recommendation for which intervention family to pursue, along with the rationale and supporting evidence. This should be done only when you have sufficient evidence to support a confident recommendation. The bottleneck parameter should specify the main bottleneck you are trying to address (e.g., "low_hydrolysis_rate"), the recommended_family should be one of the canonical InterventionFamily enum values, and the decision_type should specify the type of decision being made (e.g., "final_recommendation"). The summary should be a concise statement summarizing the key reasons for your recommendation, and the evidence_artifact_ids should list the specific pieces of evidence (e.g., literature articles, assay results, expert insights) that most strongly support your recommendation."""
+        """Make a final recommendation for which intervention family to pursue, along with the rationale and supporting evidence.
+
+        The bottleneck parameter should be one of the canonical BottleneckKind enum values,
+        the recommended_family should be one of the canonical InterventionFamily enum values,
+        and the decision_type should be one of the canonical DecisionType enum values.
+        The summary should be a concise statement summarizing the key reasons for your
+        recommendation, and the evidence_artifact_ids should list the specific pieces of
+        evidence that most strongly support your recommendation.
+        """
 
         return self._safe_call(
             lambda: self._act(
@@ -329,6 +340,9 @@ class BioMedToolEnv:
 
     def _act(self, action: BioMedAction) -> str:
         if self.step_count >= self.config.max_episode_steps:
+            self.done = True
+            self.raw_reward = 0.0
+            self.training_reward = self._training_reward_value()
             return self._tool_error(
                 f"Max episode steps reached: {self.config.max_episode_steps}. "
                 "The agent should have finalized earlier."
@@ -340,8 +354,9 @@ class BioMedToolEnv:
         self._last_step_result = result
         self._last_observation = result.observation
         self.last_step_reward = float(result.reward or 0.0)
+        self.raw_reward = self.last_step_reward
         self.reward += self.last_step_reward
-        self.training_reward = self._bounded_training_reward()
+        self.training_reward = self._training_reward_value()
         self.done = bool(result.done)
         self.step_count += 1
 
@@ -355,8 +370,10 @@ class BioMedToolEnv:
             phase="step",
         )
 
-    def _bounded_training_reward(self) -> float:
+    def _training_reward_value(self) -> float:
         raw = float(self.reward)
+        if not self.config.clip_training_reward:
+            return raw
         if raw < self.config.reward_clip_min:
             return self.config.reward_clip_min
         if raw > self.config.reward_clip_max:
@@ -400,6 +417,7 @@ class BioMedToolEnv:
 
         if reward is not None:
             payload["last_step_reward"] = reward
+            payload["raw_reward"] = self.raw_reward
             payload["cumulative_reward"] = self.reward
             payload["training_reward"] = self.training_reward
 
@@ -437,13 +455,15 @@ class BioMedToolEnv:
     def _tool_error(self, message: str) -> str:
         self.invalid_tool_calls += 1
         self.last_step_reward = self.config.invalid_tool_call_penalty
+        self.raw_reward = self.last_step_reward
         self.reward += self.last_step_reward
-        self.training_reward = self._bounded_training_reward()
+        self.training_reward = self._training_reward_value()
 
         payload = {
             "phase": "tool_error",
             "error": message,
             "last_step_reward": self.last_step_reward,
+            "raw_reward": self.raw_reward,
             "cumulative_reward": self.reward,
             "training_reward": self.training_reward,
             "done": self.done,

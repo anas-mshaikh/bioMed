@@ -68,7 +68,9 @@ class BioMedEnvironment:
             step_count=latent.step_count,
             stage=latent.stage,
             spent_budget=latent.budget_spent,
+            budget_total=latent.budget_total,
             spent_time_days=latent.time_spent_days,
+            time_total_days=latent.time_total_days,
             completed_milestones=list(latent.completed_milestones),
             history_length=len(latent.history),
         )
@@ -143,8 +145,8 @@ class BioMedEnvironment:
         resolved_seed = 0 if seed is None else seed
         self._latent = sample_episode_latent_state(
             seed=resolved_seed,
-            scenario_family=scenario_family or "high_crystallinity",
-            difficulty=difficulty or "easy",
+            scenario_family=str(scenario_family) if scenario_family is not None else None,
+            difficulty=str(difficulty) if difficulty is not None else "easy",
         )
         self._episode_id = self._latent.episode_id
 

@@ -110,10 +110,10 @@ def _has_decision_quality_evidence(discoveries: Mapping[str, bool]) -> bool:
 
 
 def _structured_expert_guidance_class(raw_discoveries: Mapping[str, Any]) -> str | None:
-    for key, value in raw_discoveries.items():
+    for key, value in reversed(list(raw_discoveries.items())):
         if not str(key).startswith("expert_reply:") or not isinstance(value, Mapping):
             continue
-        guidance = normalize_structured_expert_guidance_class(value.get("guidance_class"))
+        guidance = normalize_structured_expert_guidance_class(value.get("suggested_next_action_kind"))
         if guidance is not None:
             return guidance.value
     return None
@@ -343,7 +343,8 @@ class StepRewardEngine:
                 d.get("candidate_registry_queried", False)
                 and (
                     d.get("stability_signal_estimated", False)
-                    or structured_guidance == "thermostable_single"
+                    or structured_guidance
+                    in {"run_thermostability_assay", "estimate_stability_signal"}
                     or shortlist_top_family == "thermostable_single"
                 )
             )
@@ -368,7 +369,7 @@ class StepRewardEngine:
                 return self.config.redundancy_penalty
             route_ready = bool(
                 d.get("candidate_registry_queried", False)
-                and (structured_guidance == "cocktail" or shortlist_top_family == "cocktail")
+                and (structured_guidance == "test_cocktail" or shortlist_top_family == "cocktail")
             )
             route_partial = bool(d.get("candidate_registry_queried", False) and sample_context)
             if route_ready:

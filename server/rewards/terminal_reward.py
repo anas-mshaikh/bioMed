@@ -263,14 +263,12 @@ class TerminalRewardEngine:
             ]
             has_cost_guidance = any(
                 str(reply.get("expert_id", "")).lower() == "cost_reviewer"
-                or str(reply.get("guidance_class", "")).lower() == "no_go"
                 for reply in expert_replies
             )
             if d.get("candidate_registry_queried", False) and weak_high_cost:
                 score += 0.25
-            if has_cost_guidance:
-                score += 0.15
-            if d.get("candidate_registry_queried", False) and weak_high_cost and has_cost_guidance:
+                if has_cost_guidance:
+                    score += 0.15
                 score += 0.4
 
         if score > 0.0:

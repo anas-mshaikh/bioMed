@@ -52,7 +52,12 @@ def test_public_models_are_strict_and_versioned() -> None:
             "episode": {"episode_id": "episode-1", "step_count": 0},
             "task_summary": "Canonical task.",
             "stage": "intake",
-            "resources": {"budget_remaining": 10.0, "time_remaining_days": 3},
+            "resources": {
+                "budget_remaining": 10.0,
+                "budget_total": 10.0,
+                "time_remaining_days": 3,
+                "time_total_days": 3,
+            },
         }
     )
     state = BioMedVisibleState()

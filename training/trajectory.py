@@ -8,7 +8,12 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Iterable, Mapping, Sequence
 
-from biomed_models import PRIVATE_TRUTH_METADATA_KEYS, SCHEMA_VERSION
+from biomed_models import (
+    DIFFICULTY_VALUES,
+    PRIVATE_TRUTH_METADATA_KEYS,
+    SCENARIO_FAMILY_VALUES,
+    SCHEMA_VERSION,
+)
 
 
 def _is_sequence(value: Any) -> bool:
@@ -63,6 +68,17 @@ def _normalize_legal_action_specs(value: Sequence[Any] | Any) -> list[dict[str, 
             normalized.append({str(k): to_serializable(v) for k, v in item.items()})
             continue
         normalized.append({"action_kind": str(item), "required_fields": [], "optional_fields": []})
+    return normalized
+
+
+def _validate_optional_enum_value(value: Any, allowed: Sequence[str], *, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string or null")
+    normalized = value.strip().lower()
+    if normalized not in set(allowed):
+        raise ValueError(f"Unknown {field_name}: {value!r}")
     return normalized
 
 
@@ -136,8 +152,8 @@ class TrajectoryStep:
 class Trajectory:
     episode_id: str
     seed: int
-    scenario_family: str
-    difficulty: str
+    scenario_family: str | None
+    difficulty: str | None
     policy_name: str
     steps: list[TrajectoryStep] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -189,7 +205,7 @@ class Trajectory:
             return None
         return str(self.steps[-1].action.get("action_kind")) if self.steps[-1].action else None
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_public_dict(self) -> dict[str, Any]:
         public_metadata = {
             str(key): value
             for key, value in self.metadata.items()
@@ -199,8 +215,6 @@ class Trajectory:
         return {
             "episode_id": self.episode_id,
             "seed": int(self.seed),
-            "scenario_family": self.scenario_family,
-            "difficulty": self.difficulty,
             "policy_name": self.policy_name,
             "steps": [step.to_dict() for step in self.steps],
             "total_reward": self.total_reward,
@@ -210,13 +224,35 @@ class Trajectory:
             "schema_version": self.schema_version,
         }
 
+    def to_benchmark_metadata_dict(
+        self, *, truth_summary: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "episode_id": self.episode_id,
+            "seed": int(self.seed),
+            "scenario_family": self.scenario_family,
+            "difficulty": self.difficulty,
+        }
+        if truth_summary is not None:
+            payload["truth_summary"] = to_serializable(dict(truth_summary))
+        return payload
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.to_public_dict()
+
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "Trajectory":
+        scenario_family = _validate_optional_enum_value(
+            payload.get("scenario_family"), SCENARIO_FAMILY_VALUES, field_name="scenario_family"
+        )
+        difficulty = _validate_optional_enum_value(
+            payload.get("difficulty"), DIFFICULTY_VALUES, field_name="difficulty"
+        )
         trajectory = cls(
             episode_id=str(payload.get("episode_id", "")),
             seed=int(payload.get("seed", 0)),
-            scenario_family=str(payload.get("scenario_family", "unknown")),
-            difficulty=str(payload.get("difficulty", "unknown")),
+            scenario_family=scenario_family,
+            difficulty=difficulty,
             policy_name=str(payload.get("policy_name", "unknown")),
             metadata=dict(payload.get("metadata", {})),
             success=payload.get("success"),
@@ -267,7 +303,7 @@ class TrajectoryDataset:
     def group_by_scenario_family(self) -> dict[str, "TrajectoryDataset"]:
         grouped: dict[str, list[Trajectory]] = {}
         for trajectory in self.trajectories:
-            grouped.setdefault(trajectory.scenario_family, []).append(trajectory)
+            grouped.setdefault(trajectory.scenario_family or "unknown", []).append(trajectory)
         return {
             k: TrajectoryDataset(
                 v,
@@ -286,12 +322,24 @@ class TrajectoryDataset:
             for episode_id, truth in self._benchmark_truth_sidecar.items()
         }
 
+    def benchmark_metadata_sidecar(self) -> dict[str, dict[str, Any]]:
+        payload: dict[str, dict[str, Any]] = {}
+        for trajectory in self.trajectories:
+            truth = self._benchmark_truth_sidecar.get(trajectory.episode_id)
+            payload[trajectory.episode_id] = trajectory.to_benchmark_metadata_dict(
+                truth_summary=truth if isinstance(truth, Mapping) else None
+            )
+        return payload
+
     def apply_truth_sidecar(self, payload: Mapping[str, Any]) -> None:
         sidecar: dict[str, dict[str, Any]] = {}
         for trajectory in self.trajectories:
             truth = payload.get(trajectory.episode_id)
             if isinstance(truth, Mapping):
-                sidecar[trajectory.episode_id] = dict(truth)
+                if "truth_summary" in truth and isinstance(truth.get("truth_summary"), Mapping):
+                    sidecar[trajectory.episode_id] = dict(truth["truth_summary"])
+                else:
+                    sidecar[trajectory.episode_id] = dict(truth)
         self._benchmark_truth_sidecar = sidecar
 
     def save_jsonl(
@@ -309,7 +357,7 @@ class TrajectoryDataset:
             truth_sidecar = Path(truth_sidecar_path)
             truth_sidecar.parent.mkdir(parents=True, exist_ok=True)
             truth_sidecar.write_text(
-                json.dumps(self.benchmark_truth_sidecar(), indent=2, ensure_ascii=False),
+                json.dumps(self.benchmark_metadata_sidecar(), indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
         return path
@@ -361,6 +409,7 @@ class TrajectoryDataset:
             return {
                 "n": 0,
                 "success_rate": 0.0,
+                "success_known_fraction": 0.0,
                 "mean_reward": 0.0,
                 "mean_length": 0.0,
                 "max_reward": 0.0,
@@ -370,15 +419,19 @@ class TrajectoryDataset:
 
         rewards = [t.total_reward for t in self.trajectories]
         lengths = [t.num_steps for t in self.trajectories]
-        success_values = [1.0 for t in self.trajectories if t.success is True]
+        known_successes = [t.success for t in self.trajectories if t.success is not None]
+        success_known_fraction = len(known_successes) / n if n else 0.0
+        success_values = [1.0 for value in known_successes if value is True]
+        success_rate = (sum(success_values) / len(known_successes)) if known_successes else 0.0
 
         return {
             "n": n,
-            "success_rate": (sum(success_values) / n) if n else 0.0,
+            "success_rate": success_rate,
+            "success_known_fraction": success_known_fraction,
             "mean_reward": mean(rewards),
             "mean_length": mean(lengths),
             "max_reward": max(rewards),
             "min_reward": min(rewards),
-            "scenario_families": sorted({t.scenario_family for t in self.trajectories}),
+            "scenario_families": sorted({t.scenario_family or "unknown" for t in self.trajectories}),
             "policies": sorted({t.policy_name for t in self.trajectories}),
         }

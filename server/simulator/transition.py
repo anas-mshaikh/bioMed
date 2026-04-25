@@ -6,6 +6,7 @@ from typing import Any
 
 from biomed_models import (
     ArtifactType,
+    ActionKind,
     BioMedAction,
     ExpertId,
     InterventionFamily,
@@ -33,6 +34,7 @@ class TransitionExpertReply:
     summary: str
     confidence: float | None = None
     priority: Priority = Priority.MEDIUM
+    suggested_next_action_kind: ActionKind | None = None
     data: dict[str, Any] = field(default_factory=dict)
 
 
@@ -120,6 +122,18 @@ def _family_display_name(candidate_family: str) -> str:
         "no_go": "No-go route",
     }
     return display.get(candidate_family, candidate_family.replace("_", " ").title())
+
+
+def _public_expert_next_action(best_family: str, *, has_candidate_context: bool) -> ActionKind:
+    if best_family == "pretreat_then_single":
+        return ActionKind.TEST_PRETREATMENT
+    if best_family == "thermostable_single":
+        return ActionKind.RUN_THERMOSTABILITY_ASSAY
+    if best_family == "cocktail":
+        return ActionKind.TEST_COCKTAIL
+    if has_candidate_context:
+        return ActionKind.QUERY_CANDIDATE_REGISTRY
+    return ActionKind.STATE_HYPOTHESIS
 
 
 def _param_mapping(action: BioMedAction) -> dict[str, Any]:
@@ -528,22 +542,18 @@ class BioMedTransitionEngine:
         s.progress.queried_literature = True
         s.progress.mark_milestone("literature_reviewed")
 
-        family = s.scenario_family
+        focus = _string_param(action, "query_focus", default="PET bioremediation").strip()
+        if not focus:
+            focus = "PET bioremediation"
 
-        if family == "high_crystallinity":
-            primary_note = (
-                "Recent evidence suggests substrate accessibility can dominate PET conversion "
-                "when crystallinity is high; pretreatment may matter more than catalyst swapping."
-            )
-            caveat_note = "Thermostable enzymes can still help, but they may not rescue poor accessibility alone."
-        elif family == "thermostability_bottleneck":
-            primary_note = "Bench activity without operating-condition stability can overstate remediation potential."
-            caveat_note = (
-                "Nominal conversion data should be interpreted alongside stability-aware evidence."
-            )
-        else:
-            primary_note = "Contamination and sample-quality artifacts can distort interpretation of assay results."
-            caveat_note = "Early controls and cleanup checks may save budget otherwise spent on misleading follow-up."
+        primary_note = (
+            f"Background PET literature on {focus} often discusses crystallinity, thermostability, "
+            "contamination, and cocktail behavior as generic risk factors rather than case-specific truth."
+        )
+        caveat_note = (
+            "Treat literature as prior context only; use measurements, assays, registry evidence, "
+            "and expert follow-up for episode-specific conclusions."
+        )
 
         literature_data = {
             "primary_note": primary_note,
@@ -562,7 +572,7 @@ class BioMedTransitionEngine:
 
         return TransitionEffect(
             effect_type="literature",
-            summary="Retrieved literature-style evidence relevant to the current PET case.",
+            summary="Retrieved background literature context for PET bioremediation.",
             success=True,
             quality_score=0.84,
             artifacts=[
@@ -1055,67 +1065,65 @@ class BioMedTransitionEngine:
 
         truth = s.intervention_truth
         misdirect = s.next_random() < belief.misdirection_risk
+        public_confidence = round(
+            _clamp((belief.confidence_bias * 0.7) + (0.15 if not misdirect else 0.05), 0.0, 1.0),
+            2,
+        )
 
         if belief.knows_true_bottleneck and not misdirect:
             if truth.best_intervention_family == "pretreat_then_single":
-                guidance_class = "pretreat_then_single"
                 summary = (
-                    "The main risk appears upstream of catalyst choice. I would test "
-                    "substrate accessibility and pretreatment leverage before over-indexing "
-                    "on new enzyme families."
+                    "I would validate whether upstream substrate handling changes the outcome "
+                    "before spending on more candidate exploration."
                 )
-                suggested_next = "inspect or validate pretreatment leverage"
+                suggested_next_action_kind = _public_expert_next_action(
+                    "pretreat_then_single", has_candidate_context=s.progress.queried_candidate_registry
+                )
             elif truth.best_intervention_family == "thermostable_single":
-                guidance_class = "thermostable_single"
                 summary = (
-                    "I suspect the route looks better on paper than under operating conditions. "
-                    "Stability-aware validation should come before broad exploratory branching."
+                    "I would check whether operating conditions are suppressing the apparent candidate advantage."
                 )
-                suggested_next = "validate thermostability-aware performance"
+                suggested_next_action_kind = _public_expert_next_action(
+                    "thermostable_single", has_candidate_context=s.progress.queried_candidate_registry
+                )
             elif truth.best_intervention_family == "cocktail":
-                guidance_class = "cocktail"
                 summary = (
-                    "Single-route reasoning may be missing a combinational effect. "
-                    "I would keep mixture synergy on the table."
+                    "I would compare the current candidate against a mixture-based follow-up."
                 )
-                suggested_next = "compare cocktail against single-route baseline"
+                suggested_next_action_kind = _public_expert_next_action(
+                    "cocktail", has_candidate_context=s.progress.queried_candidate_registry
+                )
             else:
-                guidance_class = "no_go"
                 summary = (
-                    "The evidence may not justify continued spend. Preserve optionality "
-                    "and be ready to recommend a no-go."
+                    "I would re-check the current candidate space and spend assumptions before another expensive round."
                 )
-                suggested_next = "evaluate stop/go threshold explicitly"
+                suggested_next_action_kind = _public_expert_next_action(
+                    "no_go", has_candidate_context=s.progress.queried_candidate_registry
+                )
             priority = "high"
         else:
             if misdirect:
                 summary = (
-                    "My instinct is to push harder on the current focus, "
-                    "even if the evidence is not fully settled yet."
+                    "I would keep the next step practical and evidence-focused rather than committing too early."
                 )
             else:
                 summary = (
-                    "I would focus next on the current leading evidence gap."
+                    "I would focus next on the most informative visible evidence gap."
                 )
-            suggested_next = "clarify the current leading evidence gap"
-            guidance_class = (
-                "no_go"
-                if any(
-                    token in str(belief.preferred_focus or "").lower()
-                    for token in ("stop", "no-go", "continued spend")
-                )
-                else None
+            suggested_next_action_kind = _public_expert_next_action(
+                "no_go" if any(token in str(belief.preferred_focus or "").lower() for token in ("stop", "no-go", "continued spend")) else truth.best_intervention_family.value,
+                has_candidate_context=s.progress.queried_candidate_registry,
             )
             priority = "medium"
 
         expert_data = {
             "expert_id": expert_id,
-            "suggested_next": suggested_next,
-            "guidance_class": guidance_class,
+            "suggested_next_action_kind": suggested_next_action_kind,
         }
 
         expert_data["summary"] = summary
-        expert_data["confidence"] = belief.confidence_bias
+        expert_data["confidence"] = public_confidence
+        expert_data["priority"] = priority
         s.progress.record_discovery("expert_consulted", True)
         s.progress.record_discovery(f"expert_reply:{expert_id}", expert_data)
         s.append_history(
@@ -1134,13 +1142,14 @@ class BioMedTransitionEngine:
             effect_type="expert_reply",
             summary=f"Received expert guidance from {expert_id}.",
             success=True,
-            quality_score=round(_clamp(belief.confidence_bias, 0.15, 0.95), 4),
+            quality_score=public_confidence,
             expert_replies=[
                 TransitionExpertReply(
                     expert_id=expert_id,
                     summary=summary,
-                    confidence=belief.confidence_bias,
+                    confidence=public_confidence,
                     priority=priority,
+                    suggested_next_action_kind=suggested_next_action_kind,
                     data=expert_data,
                 )
             ],

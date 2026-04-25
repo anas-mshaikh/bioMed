@@ -73,10 +73,23 @@ def _candidate_cards(observation: Any) -> list[dict[str, Any]]:
     return sorted(cards, key=lambda x: float(x.get("visible_score", 0.0) or 0.0), reverse=True)
 
 
+def _expert_inbox_dicts(observation: Any) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for item in _obs_list(observation, "expert_inbox"):
+        if hasattr(item, "model_dump"):
+            dumped = item.model_dump()
+            if isinstance(dumped, dict):
+                items.append(dumped)
+        elif isinstance(item, dict):
+            items.append(dict(item))
+    return items
+
+
 def _extract_signals(observation: Any, trajectory: Any) -> dict[str, Any]:
     actions_taken = _trajectory_action_kinds(trajectory)
     cards = _candidate_cards(observation)
     latest_output = _latest_output_dict(observation)
+    expert_inbox = _expert_inbox_dicts(observation)
     top_route = None
     for card in cards:
         family = card.get("candidate_family")
@@ -93,9 +106,12 @@ def _extract_signals(observation: Any, trajectory: Any) -> dict[str, Any]:
     contamination_high = False
     crystallinity_high = False
     artifact_suspected = False
-    expert_route_hint = structured_expert_guidance_from_observation(observation)
-    expert_guidance_class = expert_route_hint
+    expert_hint_action = structured_expert_guidance_from_observation(observation)
     decisive_evidence = 0
+    cost_reviewer_reply = any(
+        str(item.get("expert_id", "")).lower() == "cost_reviewer"
+        for item in expert_inbox
+    )
 
     for item in _artifact_cards(observation):
         data = item.get("data", {})
@@ -166,13 +182,14 @@ def _extract_signals(observation: Any, trajectory: Any) -> dict[str, Any]:
     cocktail_strong = synergy_score is not None and synergy_score >= 0.65
     pretreatment_promising = pretreatment_uplift >= 0.25
     candidate_strength_low = bool(cards) and top_visible_score < 0.58
-    no_go_signal = expert_route_hint == "no_go" or (candidate_strength_low and all_high_cost)
+    no_go_signal = candidate_strength_low and all_high_cost
     economic_no_go_complete = (
         bool(cards)
         and candidate_strength_low
         and all_high_cost
         and (
-            expert_route_hint == "no_go" or _count_taken(trajectory, "query_candidate_registry") > 0
+            _count_taken(trajectory, "query_candidate_registry") > 0
+            or cost_reviewer_reply
         )
     )
 
@@ -187,9 +204,6 @@ def _extract_signals(observation: Any, trajectory: Any) -> dict[str, Any]:
     if candidate_strength_low and all_high_cost:
         decisive_evidence += 1
 
-    if expert_route_hint in ASSAY_ROUTE_FAMILIES:
-        top_route = expert_route_hint
-
     return {
         "candidate_cards": cards,
         "top_route": top_route or "thermostable_single",
@@ -202,8 +216,7 @@ def _extract_signals(observation: Any, trajectory: Any) -> dict[str, Any]:
         "candidate_strength_low": candidate_strength_low,
         "all_high_cost": all_high_cost,
         "top_visible_score": top_visible_score,
-        "expert_route_hint": expert_route_hint,
-        "expert_guidance_class": expert_guidance_class,
+        "expert_hint_action": expert_hint_action.value if expert_hint_action is not None else None,
         "artifact_suspected": artifact_suspected,
         "decisive_evidence": decisive_evidence,
         "economic_no_go_complete": economic_no_go_complete,
@@ -324,43 +337,9 @@ def _ready_to_finalize(signals: dict[str, Any], context: dict[str, bool]) -> boo
 def _expert_guided_next_actions(
     signals: dict[str, Any], legal: Sequence[str], trajectory: Any
 ) -> list[str]:
-    guidance = signals["expert_guidance_class"]
-    if guidance == "pretreat_then_single":
-        return [
-            "measure_crystallinity",
-            "test_pretreatment",
-            "run_hydrolysis_assay",
-        ]
-    if guidance == "thermostable_single":
-        return [
-            "estimate_stability_signal",
-            "run_thermostability_assay",
-            "run_hydrolysis_assay",
-        ]
-    if guidance == "cocktail":
-        return [
-            "query_candidate_registry",
-            "test_cocktail",
-            "run_hydrolysis_assay",
-        ]
-    if guidance == "no_go":
-        return [
-            "query_candidate_registry",
-            "ask_expert",
-            "state_hypothesis",
-        ]
-    if signals["expert_route_hint"] == "pretreat_then_single":
-        return ["measure_crystallinity", "test_pretreatment", "run_hydrolysis_assay"]
-    if signals["expert_route_hint"] == "thermostable_single":
-        return [
-            "estimate_stability_signal",
-            "run_thermostability_assay",
-            "run_hydrolysis_assay",
-        ]
-    if signals["expert_route_hint"] == "cocktail":
-        return ["query_candidate_registry", "test_cocktail", "run_hydrolysis_assay"]
-    if signals["expert_route_hint"] == "no_go":
-        return ["query_candidate_registry", "ask_expert", "state_hypothesis"]
+    guidance = signals["expert_hint_action"]
+    if guidance is not None:
+        return [guidance]
     return []
 
 
@@ -389,7 +368,6 @@ def _default_recommendation(observation: Any, trajectory: Any) -> dict[str, Any]
 
     semantics = infer_recommendation_from_structured_signals(
         top_route=signals["top_route"],
-        expert_guidance_class=signals["expert_guidance_class"],
         contamination_signal=signals["contamination_signal"],
         cocktail_strong=signals["cocktail_strong"],
         pretreatment_promising=signals["pretreatment_promising"],
@@ -437,14 +415,8 @@ def _default_recommendation(observation: Any, trajectory: Any) -> dict[str, Any]
 
 def _choose_expert(observation: Any, trajectory: Any) -> str:
     signals = _extract_signals(observation, trajectory)
-    if signals["expert_guidance_class"] == "no_go" or signals["no_go_signal"]:
+    if signals["no_go_signal"]:
         return "cost_reviewer"
-    if signals["expert_guidance_class"] == "thermostable_single":
-        return "computational_biologist"
-    if signals["expert_guidance_class"] == "cocktail":
-        return "wet_lab_lead"
-    if signals["expert_guidance_class"] == "pretreat_then_single":
-        return "wet_lab_lead"
     if signals["stability_low"] or signals["top_route"] == "thermostable_single":
         return "computational_biologist"
     if signals["contamination_signal"] or signals["crystallinity_high"] or signals["pretreatment_promising"]:
@@ -485,8 +457,6 @@ def _build_action(action_kind: str, observation: Any, trajectory: Any) -> BioMed
     if action_kind == "run_hydrolysis_assay":
         signals = _extract_signals(observation, trajectory)
         route = signals["top_route"]
-        if signals["expert_guidance_class"] in ASSAY_ROUTE_FAMILIES:
-            route = str(signals["expert_guidance_class"])
         pretreated = route == "pretreat_then_single" and (
             signals["pretreatment_promising"] or signals["crystallinity_high"]
         )
@@ -629,6 +599,14 @@ class CostAwareHeuristicPolicy(BasePolicy):
             return _build_action("inspect_feedstock", observation, trajectory)
 
         if (
+            context["sample"]
+            and not context["candidate"]
+            and "query_candidate_registry" in legal
+            and _count_taken(trajectory, "query_candidate_registry") == 0
+        ):
+            return _build_action("query_candidate_registry", observation, trajectory)
+
+        if (
             context["candidate"]
             and not context["high_signal"]
             and "measure_contamination" in legal
@@ -753,7 +731,7 @@ class ExpertAugmentedHeuristicPolicy(BasePolicy):
         ):
             return _build_action("test_cocktail", observation, trajectory)
 
-        if signals["expert_guidance_class"] is None and not context["high_signal"]:
+        if signals["expert_hint_action"] is None and not context["high_signal"]:
             for action_kind in _high_signal_priority(signals) + ["estimate_stability_signal"]:
                 if action_kind in legal and _count_taken(trajectory, action_kind) == 0:
                     return _build_action(action_kind, observation, trajectory)
@@ -761,9 +739,7 @@ class ExpertAugmentedHeuristicPolicy(BasePolicy):
         if _ready_to_finalize(signals, context):
             if _has_economic_no_go_evidence(signals, context) and "finalize_recommendation" in legal:
                 return _build_action("finalize_recommendation", observation, trajectory)
-            if "finalize_recommendation" in legal and (
-                context["hypothesis"] or signals["expert_guidance_class"] is not None
-            ):
+            if "finalize_recommendation" in legal and context["hypothesis"]:
                 return _build_action("finalize_recommendation", observation, trajectory)
             if "state_hypothesis" in legal and _count_taken(trajectory, "state_hypothesis") == 0:
                 return _build_action("state_hypothesis", observation, trajectory)
