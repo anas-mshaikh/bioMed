@@ -322,11 +322,15 @@ class TerminalRewardEngine:
                 )
             else:
                 weak_high_cost = False
-            expert_replies = [
-                value
-                for key, value in raw_discoveries.items()
-                if str(key).startswith("expert_reply:") and isinstance(value, Mapping)
-            ]
+            expert_replies: list[Mapping] = []
+            for key, value in raw_discoveries.items():
+                if not str(key).startswith("expert_reply:"):
+                    continue
+                # Support both new list format (multiple consultations) and legacy single-dict.
+                if isinstance(value, list):
+                    expert_replies.extend(item for item in value if isinstance(item, Mapping))
+                elif isinstance(value, Mapping):
+                    expert_replies.append(value)
             has_cost_guidance = any(
                 str(reply.get("expert_id", "")).lower() == "cost_reviewer"
                 for reply in expert_replies

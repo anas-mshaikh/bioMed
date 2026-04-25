@@ -5,18 +5,47 @@ from typing import Any
 
 from biomed_models import (
     ACTION_COSTS,
-    ASSAY_EVIDENCE_KEYS,
     ActionKind,
     BioMedAction,
     ExpertId,
     ExpertQueryParams,
     HydrolysisAssayParams,
-    SAMPLE_CHARACTERIZATION_KEYS,
     milestone_count,
 )
-from biomed_models.semantics import has_economic_no_go_evidence_from_discoveries
+from biomed_models.predicates import (
+    has_hydrolysis_context,
+    has_economic_no_go_evidence,
+    has_sample_context,
+    has_candidate_context,
+    hypothesis_has_support,
+    missing_finalize_prerequisites,
+)
 from server.simulator.latent_models import LatentEpisodeState
 from .types import RuleCheckResult, RuleDecision, RuleSeverity, RuleViolation
+
+_FINALIZE_REQUIRED_FIELDS = ("recommended_family", "bottleneck", "decision_type", "summary")
+
+
+def _missing_finalize_fields(action: BioMedAction) -> list[str]:
+    """Return the list of required FINALIZE_RECOMMENDATION parameter fields that are absent or empty.
+
+    Validates action structure *before* the transition engine receives it so
+    that a malformed finalize is treated as a hard rule violation rather than
+    a runtime exception inside the transition engine.
+    """
+    params = action.parameters
+    if hasattr(params, "model_dump"):
+        mapping: dict = params.model_dump(mode="json")
+    elif isinstance(params, dict):
+        mapping = params
+    else:
+        return list(_FINALIZE_REQUIRED_FIELDS) + ["evidence_artifact_ids"]
+
+    missing = [f for f in _FINALIZE_REQUIRED_FIELDS if not mapping.get(f)]
+    evidence = mapping.get("evidence_artifact_ids")
+    if not isinstance(evidence, list) or not evidence:
+        missing.append("evidence_artifact_ids")
+    return missing
 
 
 class RuleEngine:
@@ -33,15 +62,6 @@ class RuleEngine:
     _KNOWN_ACTIONS = frozenset(ActionKind)
 
     _KNOWN_EXPERTS = frozenset(ExpertId)
-
-    @staticmethod
-    def _has_hydrolysis_context(discoveries: dict[str, Any]) -> bool:
-        sample_context = any(discoveries.get(key, False) for key in SAMPLE_CHARACTERIZATION_KEYS)
-        candidate_context = bool(
-            discoveries.get("candidate_registry_queried", False)
-            or discoveries.get("stability_signal_estimated", False)
-        )
-        return bool(sample_context and candidate_context)
 
     def get_legal_next_actions(self, latent: LatentEpisodeState) -> list[ActionKind]:
         if latent.done:
@@ -73,7 +93,7 @@ class RuleEngine:
                 ]
             )
 
-        if self._has_hydrolysis_context(d):
+        if has_hydrolysis_context(d):
             legal.append(ActionKind.RUN_HYDROLYSIS_ASSAY)
 
         if d.get("activity_assay_run", False):
@@ -311,12 +331,9 @@ class RuleEngine:
 
         if a == ActionKind.RUN_HYDROLYSIS_ASSAY:
             missing: list[str] = []
-            if not any(d.get(key, False) for key in SAMPLE_CHARACTERIZATION_KEYS):
+            if not has_sample_context(d):
                 missing.append("sample_characterization")
-            if not (
-                d.get("candidate_registry_queried", False)
-                or d.get("stability_signal_estimated", False)
-            ):
+            if not has_candidate_context(d):
                 missing.append("candidate_context")
             if missing:
                 return hard(
@@ -334,33 +351,20 @@ class RuleEngine:
                     missing,
                 ), soft
 
+            malformed = _missing_finalize_fields(action)
+            if malformed:
+                return hard(
+                    "FINALIZE_MALFORMED",
+                    "finalize_recommendation action is missing required parameter fields; "
+                    "the transition engine cannot produce a valid decision without them.",
+                    malformed,
+                ), soft
+
         return None, soft
 
     def _missing_finalize_prerequisites(self, latent: LatentEpisodeState) -> list[str]:
-        """Return the list of prerequisite names that block finalization.
-
-        This is the single source of truth for finalize legality: both
-        ``validate_action`` (which turns the missing set into a hard violation)
-        and ``get_legal_next_actions`` (which surfaces the action in the
-        suggested set) call it. Previously the two paths diverged, producing
-        ``FINALIZE_TOO_EARLY`` failures for actions ``get_legal_next_actions``
-        had just advertised.
-        """
-        d = latent.discoveries
-        missing: list[str] = []
-        if not d.get("feedstock_inspected", False):
-            missing.append("feedstock_inspected")
-        if not d.get("candidate_registry_queried", False):
-            missing.append("candidate_registry_queried")
-        has_assay_evidence = any(d.get(key, False) for key in ASSAY_EVIDENCE_KEYS)
-        if not (self._has_economic_no_go_evidence(latent) or has_assay_evidence):
-            missing.append("decision_quality_evidence")
-        if not d.get("hypothesis_stated", False):
-            missing.append("hypothesis_stated")
-        return missing
-
-    def _has_economic_no_go_evidence(self, latent: LatentEpisodeState) -> bool:
-        return has_economic_no_go_evidence_from_discoveries(latent.discoveries)
+        """Delegate to the canonical predicate so rule and reward paths cannot diverge."""
+        return missing_finalize_prerequisites(latent.discoveries)
 
     def _check_redundancy(
         self,
@@ -444,9 +448,9 @@ class RuleEngine:
         action: BioMedAction,
     ) -> RuleViolation | None:
         a = action.action_kind
-        evidence_count = self._evidence_count(latent)
+        d = latent.discoveries
 
-        if a == ActionKind.STATE_HYPOTHESIS and evidence_count < 2:
+        if a == ActionKind.STATE_HYPOTHESIS and not hypothesis_has_support(d):
             return RuleViolation(
                 rule_code="WEAK_HYPOTHESIS_SUPPORT",
                 severity="soft",
@@ -456,6 +460,7 @@ class RuleEngine:
         expert_id = (
             action.parameters.expert_id if isinstance(action.parameters, ExpertQueryParams) else None
         )
+        evidence_count = self._evidence_count(latent)
         if a == ActionKind.ASK_EXPERT and evidence_count == 0 and expert_id == ExpertId.PROCESS_ENGINEER:
             return RuleViolation(
                 rule_code="PREMATURE_EXPERT_SELECTION",

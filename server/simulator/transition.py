@@ -1078,7 +1078,6 @@ class BioMedTransitionEngine:
         s.consult_expert(expert_id)
         s.progress.mark_milestone("expert_consulted")
 
-        truth = s.intervention_truth
         misdirect = s.next_random() < belief.misdirection_risk
         public_confidence = round(
             _clamp((belief.confidence_bias * 0.7) + (0.15 if not misdirect else 0.05), 0.0, 1.0),
@@ -1086,35 +1085,20 @@ class BioMedTransitionEngine:
         )
 
         if belief.knows_true_bottleneck and not misdirect:
-            if truth.best_intervention_family == "pretreat_then_single":
-                summary = (
-                    "I would validate whether upstream substrate handling changes the outcome "
-                    "before spending on more candidate exploration."
-                )
-                suggested_next_action_kind = _public_expert_next_action(
-                    "pretreat_then_single", has_candidate_context=s.progress.queried_candidate_registry
-                )
-            elif truth.best_intervention_family == "thermostable_single":
-                summary = (
-                    "I would check whether operating conditions are suppressing the apparent candidate advantage."
-                )
-                suggested_next_action_kind = _public_expert_next_action(
-                    "thermostable_single", has_candidate_context=s.progress.queried_candidate_registry
-                )
-            elif truth.best_intervention_family == "cocktail":
-                summary = (
-                    "I would compare the current candidate against a mixture-based follow-up."
-                )
-                suggested_next_action_kind = _public_expert_next_action(
-                    "cocktail", has_candidate_context=s.progress.queried_candidate_registry
-                )
-            else:
-                summary = (
-                    "I would re-check the current candidate space and spend assumptions before another expensive round."
-                )
-                suggested_next_action_kind = _public_expert_next_action(
-                    "no_go", has_candidate_context=s.progress.queried_candidate_registry
-                )
+            # The expert has domain knowledge but must not reveal the true
+            # best_intervention_family directly — that is oracle information.
+            # We derive the suggestion from the expert's preferred_focus and
+            # the agent's observed progress, exactly as the uninformed branch
+            # does, but give the informed expert higher effective confidence.
+            # The summary text is deliberately domain-generic to avoid leaking
+            # family labels via a pattern-matching shortcut.
+            summary = (
+                "I would focus next on the most promising evidence gap given what we know so far."
+            )
+            suggested_next_action_kind = _expert_next_action_from_public_signals(
+                belief=belief,
+                state=s,
+            )
             priority = "high"
         else:
             if misdirect:
@@ -1148,7 +1132,16 @@ class BioMedTransitionEngine:
         expert_data["confidence"] = public_confidence
         expert_data["priority"] = priority
         s.progress.record_discovery("expert_consulted", True)
-        s.progress.record_discovery(f"expert_reply:{expert_id}", expert_data)
+        _discovery_key = f"expert_reply:{expert_id}"
+        _existing_replies = s.progress.discoveries.get(_discovery_key)
+        if _existing_replies is None:
+            _replies_list: list[dict] = []
+        elif isinstance(_existing_replies, list):
+            _replies_list = list(_existing_replies)
+        else:
+            _replies_list = [_existing_replies]
+        _replies_list.append(expert_data)
+        s.progress.record_discovery(_discovery_key, _replies_list)
         s.append_history(
             action_kind="ask_expert",
             summary=f"Consulted expert: {expert_id}.",
@@ -1234,12 +1227,10 @@ class BioMedTransitionEngine:
         time_delta_days: int,
     ) -> TransitionEffect:
         recommendation = _param_mapping(action)
-        # FinalRecommendationParams enforces these fields via Pydantic, but a
-        # caller may bypass the model (tests, replays, external wrappers) and
-        # pass a raw dict. Silent defaults like ``"unspecified"`` previously
-        # corrupted benchmark scoring because the stored decision looked valid
-        # but had no actual recommendation semantics. Validate explicitly so
-        # the failure surfaces at the transition boundary.
+        # Structural validation is now the responsibility of the rule engine
+        # (FINALIZE_MALFORMED hard violation).  The transition engine still
+        # asserts the invariant as a safety net to catch callers that skip the
+        # rule engine entirely (tests, replays).
         required_fields = (
             "recommended_family",
             "bottleneck",
@@ -1253,11 +1244,10 @@ class BioMedTransitionEngine:
         evidence = recommendation.get("evidence_artifact_ids")
         if not isinstance(evidence, list) or not evidence:
             missing.append("evidence_artifact_ids")
-        if missing:
-            raise ValueError(
-                "finalize_recommendation requires parameters "
-                f"{sorted(missing)!r}; cannot submit a decision without structured fields."
-            )
+        assert not missing, (
+            "FINALIZE_MALFORMED invariant violated — transition engine received a malformed "
+            f"finalize_recommendation that should have been blocked by the rule engine: missing={sorted(missing)!r}"
+        )
 
         recommended_family = str(recommendation["recommended_family"])
         bottleneck = str(recommendation["bottleneck"])

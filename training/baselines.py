@@ -187,12 +187,6 @@ def _extract_signals(observation: Any, trajectory: Any) -> dict[str, Any]:
     pretreatment_promising = pretreatment_uplift >= 0.25
     candidate_strength_low = bool(cards) and top_visible_score < 0.58
     no_go_signal = candidate_strength_low and all_high_cost
-    economic_no_go_complete = (
-        bool(cards)
-        and candidate_strength_low
-        and all_high_cost
-        and cost_reviewer_reply
-    )
 
     if contamination_signal:
         decisive_evidence += 1
@@ -220,7 +214,6 @@ def _extract_signals(observation: Any, trajectory: Any) -> dict[str, Any]:
         "expert_hint_action": expert_hint_action.value if expert_hint_action is not None else None,
         "artifact_suspected": artifact_suspected,
         "decisive_evidence": decisive_evidence,
-        "economic_no_go_complete": economic_no_go_complete,
         "cost_reviewer_reply": cost_reviewer_reply,
         "stability_signal_score": stability_signal_score,
         "thermostability_retention": thermostability_retention,
@@ -311,7 +304,6 @@ def _has_economic_no_go_evidence(signals: dict[str, Any], context: dict[str, boo
         candidate_strength_low=bool(signals.get("candidate_strength_low", False)),
         all_high_cost=bool(signals.get("all_high_cost", False)),
         cost_reviewer_consulted=cost_reviewer_consulted,
-        economic_no_go_complete=bool(signals.get("economic_no_go_complete", False)),
     )
 
 

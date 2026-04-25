@@ -532,19 +532,23 @@ def test_efficiency_zero_when_no_info_gain() -> None:
 
 
 def test_baseline_economic_no_go_requires_cost_reviewer_reply() -> None:
+    # All three conditions (candidate_strength_low, all_high_cost,
+    # cost_reviewer_reply) must be present; there is no bypass flag.
     signals = {
         "actions_taken": {"ask_expert", "query_candidate_registry"},
         "candidate_strength_low": True,
         "all_high_cost": True,
-        "economic_no_go_complete": False,
         "cost_reviewer_reply": False,
     }
     context = {"candidate": True}
     assert _has_economic_no_go_evidence(signals, context) is False
 
     signals["cost_reviewer_reply"] = True
-    signals["economic_no_go_complete"] = True
     assert _has_economic_no_go_evidence(signals, context) is True
+
+    # Missing candidate_strength_low still gates the result.
+    signals["candidate_strength_low"] = False
+    assert _has_economic_no_go_evidence(signals, context) is False
 
 
 def test_characterize_first_does_not_finalize_on_structure_without_decisive_evidence() -> None:
@@ -675,7 +679,11 @@ def test_info_gain_per_cost_ignores_near_zero_cost_episodes() -> None:
         }
     }
     metrics = BioMedEvaluationSuite.benchmark_metrics(dataset)
-    assert metrics["info_gain_per_cost"] == 0.0
+    # Near-zero-cost episodes are excluded from the info_gain_per_cost average;
+    # when all episodes are excluded the metric returns NaN (absence-of-signal
+    # rather than a misleading 0.0).
+    import math
+    assert math.isnan(metrics["info_gain_per_cost"])
 
 
 def test_scenario_breakdown_requires_scenario_identity() -> None:

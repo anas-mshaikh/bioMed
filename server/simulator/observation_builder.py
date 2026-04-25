@@ -451,9 +451,14 @@ def _build_artifacts_from_discoveries(state: LatentEpisodeState) -> list[Artifac
         artifacts.append(_build_hypothesis_artifact(state, discoveries["latest_hypothesis"]))
 
     for key, value in discoveries.items():
-        if key.startswith("expert_reply:") and isinstance(value, dict):
-            expert_id = key.split(":", 1)[1]
-            artifacts.append(_build_expert_artifact(state, expert_id, value))
+        if not key.startswith("expert_reply:"):
+            continue
+        expert_id = key.split(":", 1)[1]
+        # Support both new list format (multiple consultations) and legacy single-dict.
+        reply_items = value if isinstance(value, list) else ([value] if isinstance(value, dict) else [])
+        for reply in reply_items:
+            if isinstance(reply, dict):
+                artifacts.append(_build_expert_artifact(state, expert_id, reply))
 
     if "final_decision" in discoveries and isinstance(discoveries["final_decision"], dict):
         artifacts.append(_build_decision_artifact(state, discoveries["final_decision"]))
@@ -477,31 +482,37 @@ def _build_expert_inbox_from_discoveries(state: LatentEpisodeState) -> list[Expe
     messages: list[ExpertMessage] = []
 
     for key, value in discoveries.items():
-        if not key.startswith("expert_reply:") or not isinstance(value, dict):
+        if not key.startswith("expert_reply:"):
             continue
 
         expert_id = key.split(":", 1)[1]
-        summary = value.get("summary")
-        if not isinstance(summary, str) or not summary.strip():
-            suggested_next = value.get("suggested_next_action_kind", "no suggestion recorded")
-            summary = f"Stored expert guidance. Suggested next focus: {suggested_next}"
+        # Support both new list format (multiple consultations) and legacy single-dict.
+        reply_items = value if isinstance(value, list) else ([value] if isinstance(value, dict) else [])
+        for reply in reply_items:
+            if not isinstance(reply, dict):
+                continue
 
-        confidence = value.get("confidence")
-        if not isinstance(confidence, (int, float)):
-            confidence = None
+            summary = reply.get("summary")
+            if not isinstance(summary, str) or not summary.strip():
+                suggested_next = reply.get("suggested_next_action_kind", "no suggestion recorded")
+                summary = f"Stored expert guidance. Suggested next focus: {suggested_next}"
 
-        public_data = to_public_output_data(OutputType.EXPERT_REPLY, dict(value))
+            confidence = reply.get("confidence")
+            if not isinstance(confidence, (int, float)):
+                confidence = None
 
-        messages.append(
-            ExpertMessage(
-                expert_id=expert_id,
-                summary=summary,
-                confidence=confidence,
-                priority=public_data.get("priority", "medium"),
-                suggested_next_action_kind=public_data.get("suggested_next_action_kind"),
-                data=public_data,
+            public_data = to_public_output_data(OutputType.EXPERT_REPLY, dict(reply))
+
+            messages.append(
+                ExpertMessage(
+                    expert_id=expert_id,
+                    summary=summary,
+                    confidence=confidence,
+                    priority=public_data.get("priority", "medium"),
+                    suggested_next_action_kind=public_data.get("suggested_next_action_kind"),
+                    data=public_data,
+                )
             )
-        )
 
     return messages
 

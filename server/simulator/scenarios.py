@@ -246,7 +246,7 @@ DIFFICULTY_PROFILES: dict[Difficulty, DifficultyProfile] = {
     Difficulty.EASY: DifficultyProfile(
         budget_range=(95.0, 120.0),
         time_days_range=(18, 24),
-        max_steps_range=(6, 8),
+        max_steps_range=(12, 16),
         base_noise_sigma_range=(0.03, 0.07),
         false_negative_risk_range=(0.03, 0.10),
         artifact_risk_range=(0.02, 0.09),
@@ -257,7 +257,7 @@ DIFFICULTY_PROFILES: dict[Difficulty, DifficultyProfile] = {
     Difficulty.MEDIUM: DifficultyProfile(
         budget_range=(80.0, 110.0),
         time_days_range=(14, 21),
-        max_steps_range=(7, 9),
+        max_steps_range=(10, 14),
         base_noise_sigma_range=(0.06, 0.11),
         false_negative_risk_range=(0.08, 0.18),
         artifact_risk_range=(0.08, 0.18),

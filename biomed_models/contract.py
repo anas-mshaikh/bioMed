@@ -140,6 +140,64 @@ class BenchmarkMetricKey(CanonicalStrEnum):
     FINALIZATION_RATE = "finalization_rate"
 
 
+# Registry of docstrings for every BenchmarkMetricKey.  A test in
+# tests/contract/test_metric_schema.py asserts that every key has an entry
+# here, so adding a new key without a description is a CI failure.
+BENCHMARK_METRIC_DOCSTRINGS: dict[str, str] = {
+    BenchmarkMetricKey.WORKFLOW_VALIDITY_HARD_RATE: (
+        "Fraction of episodes with zero hard (illegal) rule violations."
+    ),
+    BenchmarkMetricKey.WORKFLOW_VALIDITY_SOFT_RATE: (
+        "Fraction of episodes with zero soft (scientific-warning) rule violations."
+    ),
+    BenchmarkMetricKey.ORDERING_SCORE: (
+        "Mean ordering-reward component across all steps; "
+        "higher values indicate actions taken in a scientifically sound sequence."
+    ),
+    BenchmarkMetricKey.ACTION_DIVERSITY: (
+        "Fraction of canonical action kinds exercised per trajectory; "
+        "penalizes trivially repetitive policies."
+    ),
+    BenchmarkMetricKey.MEAN_CONCLUSION_CONFIDENCE: (
+        "Mean agent-reported confidence at finalization; "
+        "undefined (NaN) when no trajectory includes a finalization."
+    ),
+    BenchmarkMetricKey.BOTTLENECK_ACCURACY: (
+        "Fraction of trajectories where the predicted process bottleneck "
+        "matches the ground-truth bottleneck."
+    ),
+    BenchmarkMetricKey.INTERVENTION_FAMILY_ACCURACY: (
+        "Fraction of trajectories where the recommended intervention family "
+        "matches the ground-truth best family."
+    ),
+    BenchmarkMetricKey.STOP_GO_ACCURACY: (
+        "Fraction of trajectories where the stop/go decision direction "
+        "agrees with the ground-truth family (go = non-no_go family, stop = no_go)."
+    ),
+    BenchmarkMetricKey.INFO_GAIN_PER_COST: (
+        "Mean information-gain reward per unit of normalized resource cost; "
+        "undefined (NaN) when episodes have near-zero cost, preventing divide-by-zero masquerade."
+    ),
+    BenchmarkMetricKey.EXPERT_USEFULNESS_SCORE: (
+        "Mean fraction of expert consultations whose hint was followed "
+        "in subsequent actions or the final recommendation; "
+        "undefined (NaN) when no expert was ever consulted."
+    ),
+    BenchmarkMetricKey.EXPERT_USEFULNESS_KNOWN_FRACTION: (
+        "Fraction of episodes that included at least one expert consultation "
+        "with a scorable hint."
+    ),
+    BenchmarkMetricKey.HARD_VIOLATION_STEP_RATE: (
+        "Fraction of steps across all episodes that produced a hard rule violation."
+    ),
+    BenchmarkMetricKey.SOFT_VIOLATION_STEP_RATE: (
+        "Fraction of steps across all episodes that produced a soft rule violation."
+    ),
+    BenchmarkMetricKey.FINALIZATION_RATE: (
+        "Fraction of episodes that ended with a finalize_recommendation action."
+    ),
+}
+
 ACTION_KIND_VALUES = tuple(item.value for item in ActionKind)
 STAGE_VALUES = tuple(item.value for item in Stage)
 ARTIFACT_TYPE_VALUES = tuple(item.value for item in ArtifactType)

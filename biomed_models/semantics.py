@@ -352,20 +352,22 @@ def has_economic_no_go_evidence_from_signals(
     candidate_strength_low: bool,
     all_high_cost: bool,
     cost_reviewer_consulted: bool,
-    economic_no_go_complete: bool = False,
 ) -> bool:
     """Observation-side counterpart to :func:`has_economic_no_go_evidence_from_discoveries`.
 
     Consumes the post-observation signal bundle used by baselines and returns
     the same concept the rule engine enforces: a candidate shortlist
     exists, at least one weak+high-cost candidate was seen, and the cost
-    reviewer's opinion has been consulted (either explicitly or via the
-    ``economic_no_go_complete`` flag which captures the fallback path).
+    reviewer's opinion has been consulted.
+
+    The ``economic_no_go_complete`` bypass parameter has been removed.  Callers
+    must satisfy all three gate conditions — ``candidate_strength_low``,
+    ``all_high_cost``, and ``cost_reviewer_consulted`` — rather than bypassing
+    the check with a pre-computed flag that could be set independently of the
+    individual conditions.
     """
     if not candidate_present:
         return False
-    if economic_no_go_complete:
-        return True
     return bool(candidate_strength_low and all_high_cost and cost_reviewer_consulted)
 
 

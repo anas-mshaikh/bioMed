@@ -32,11 +32,12 @@ class RewardConfig:
     budget_sensitivity: float = 5.0
     time_sensitivity: float = 4.0
 
-    # terminal weights
+    # terminal weights — correctness components are scaled 0.4:0.4:0.2 to
+    # match the classify_success composite exactly (sum kept at 6.0).
     terminal_completeness_weight: float = 1.0
-    terminal_bottleneck_weight: float = 4.0
-    terminal_family_weight: float = 1.25
-    terminal_stop_go_weight: float = 0.75
+    terminal_bottleneck_weight: float = 2.4
+    terminal_family_weight: float = 2.4
+    terminal_stop_go_weight: float = 1.2
     terminal_calibration_weight: float = 0.25
     terminal_cost_realism_weight: float = 0.25
 

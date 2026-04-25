@@ -399,6 +399,15 @@ class LatentEpisodeState:
     def max_steps(self) -> int:
         return self.resources.max_steps
 
+    def to_public(self) -> "PublicLatent":
+        """Return a :class:`PublicLatent` view of this state.
+
+        Pass this to the observation builder and step reward engine instead of
+        the full ``LatentEpisodeState`` to enforce the oracle-leak guard at
+        runtime.  Terminal reward is the only layer that needs the full state.
+        """
+        return PublicLatent(self)
+
     def append_history(
         self,
         action_kind: str,
@@ -528,6 +537,49 @@ class LatentEpisodeState:
             },
             "history_length": len(self.history),
         }
+
+
+class PublicLatent:
+    """A restricted view of :class:`LatentEpisodeState` for safe use in the
+    observation builder and step reward engine.
+
+    Accessing any attribute that contains hidden truth raises
+    ``AttributeError`` immediately, so oracle leakage becomes a loud
+    runtime error instead of a silent correctness bug.
+
+    The terminal reward engine is the *only* legitimate consumer of the
+    full ``LatentEpisodeState``; all other components should receive a
+    ``PublicLatent`` or be passed specific public fields explicitly.
+    """
+
+    #: Fields that encode hidden truth and must never reach the
+    #: observation builder, step reward, or baseline policies.
+    _PROTECTED_ATTRS: frozenset[str] = frozenset(
+        {
+            "substrate_truth",     # crystallinity/contamination bands — discovered by actions
+            "intervention_truth",  # best_intervention_family — the oracle label
+            "catalyst_truth",      # alias for intervention_truth
+            "assay_noise",         # artifact_risk / false_negative_risk — invisible to agent
+            "expert_beliefs",      # knows_true_bottleneck / misdirection_risk
+        }
+    )
+
+    __slots__ = ("_latent",)
+
+    def __init__(self, latent: "LatentEpisodeState") -> None:
+        object.__setattr__(self, "_latent", latent)
+
+    def __getattr__(self, name: str) -> Any:
+        if name in PublicLatent._PROTECTED_ATTRS:
+            raise AttributeError(
+                f"PublicLatent: '{name}' is a protected truth field. "
+                "Only TerminalRewardEngine is allowed to access LatentEpisodeState directly. "
+                "If this is reached from the observation builder or step reward, it is an oracle leak."
+            )
+        return getattr(object.__getattribute__(self, "_latent"), name)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"PublicLatent(episode_id={getattr(self._latent, 'episode_id', '?')!r})"
 
 
 def create_empty_episode_state(

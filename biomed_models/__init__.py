@@ -28,6 +28,7 @@ from .contract import (
     ACTION_PARAMETER_REQUIREMENTS,
     ARTIFACT_TYPE_VALUES,
     ASSAY_EVIDENCE_KEYS,
+    BENCHMARK_METRIC_DOCSTRINGS,
     BENCHMARK_METRIC_KEYS,
     BOTTLENECK_KIND_VALUES,
     CANONICAL_MILESTONE_KEYS,
@@ -88,6 +89,17 @@ from .semantics import (
     sample_characterization_count,
     structured_expert_guidance_from_observation,
     terminal_recommendation_rationale,
+)
+from .predicates import (
+    ask_expert_has_context,
+    has_candidate_context,
+    has_decision_quality_evidence,
+    has_economic_no_go_evidence,
+    has_hydrolysis_context,
+    has_sample_context,
+    hypothesis_has_support,
+    is_finalize_legal,
+    missing_finalize_prerequisites,
 )
 from .state import BioMedVisibleState
 
@@ -183,4 +195,15 @@ __all__ = [
     "to_public_output_data",
     "validate_reward_breakdown",
     "terminal_recommendation_rationale",
+    "BENCHMARK_METRIC_DOCSTRINGS",
+    # predicates
+    "ask_expert_has_context",
+    "has_candidate_context",
+    "has_decision_quality_evidence",
+    "has_economic_no_go_evidence",
+    "has_hydrolysis_context",
+    "has_sample_context",
+    "hypothesis_has_support",
+    "is_finalize_legal",
+    "missing_finalize_prerequisites",
 ]

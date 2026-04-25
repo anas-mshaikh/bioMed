@@ -5,18 +5,21 @@ from typing import Any
 
 from biomed_models import (
     ACTION_COSTS,
-    ASSAY_EVIDENCE_KEYS,
     BioMedAction,
     EVIDENCE_MILESTONE_KEYS,
     InterventionFamily,
-    SAMPLE_CHARACTERIZATION_KEYS,
     assay_evidence_count,
     completed_action_kinds,
     milestone_count,
     normalize_structured_expert_guidance_class,
     sample_characterization_count,
 )
-from biomed_models.semantics import has_economic_no_go_evidence_from_discoveries
+from biomed_models.predicates import (
+    has_candidate_context as _has_candidate_context,
+    has_decision_quality_evidence as _has_decision_quality_evidence,
+    has_economic_no_go_evidence as _has_economic_no_go_evidence_from_raw,
+    has_sample_context as _has_sample_context,
+)
 from server.rules import RuleCheckResult
 from server.simulator.transition import TransitionResult
 
@@ -89,29 +92,18 @@ def _action_kind_and_params(action_or_kind: BioMedAction | str) -> tuple[str, Ma
     return str(action_or_kind), {}
 
 
-def _has_sample_context(discoveries: Mapping[str, bool]) -> bool:
-    return any(discoveries.get(key, False) for key in SAMPLE_CHARACTERIZATION_KEYS)
-
-
-def _has_candidate_context(discoveries: Mapping[str, bool]) -> bool:
-    return bool(
-        discoveries.get("candidate_registry_queried", False)
-        or discoveries.get("stability_signal_estimated", False)
-    )
-
-
-def _has_decision_quality_evidence(discoveries: Mapping[str, bool]) -> bool:
-    """Return True iff at least one discriminating assay milestone is present."""
-    return any(discoveries.get(key, False) for key in ASSAY_EVIDENCE_KEYS)
-
-
 def _structured_expert_guidance_class(raw_discoveries: Mapping[str, Any]) -> str | None:
     for key, value in reversed(list(raw_discoveries.items())):
-        if not str(key).startswith("expert_reply:") or not isinstance(value, Mapping):
+        if not str(key).startswith("expert_reply:"):
             continue
-        guidance = normalize_structured_expert_guidance_class(value.get("suggested_next_action_kind"))
-        if guidance is not None:
-            return guidance.value
+        # Support both new list format (multiple consultations) and legacy single-dict.
+        replies = value if isinstance(value, list) else ([value] if isinstance(value, Mapping) else [])
+        for reply in reversed(replies):
+            if not isinstance(reply, Mapping):
+                continue
+            guidance = normalize_structured_expert_guidance_class(reply.get("suggested_next_action_kind"))
+            if guidance is not None:
+                return guidance.value
     return None
 
 
@@ -391,7 +383,7 @@ class StepRewardEngine:
             return self.config.ordering_premature_penalty
 
         if action_kind == "finalize_recommendation":
-            economic_no_go_ready = has_economic_no_go_evidence_from_discoveries(raw)
+            economic_no_go_ready = _has_economic_no_go_evidence_from_raw(raw)
             if (
                 d.get("hypothesis_stated", False)
                 and sample_context
@@ -562,11 +554,6 @@ class StepRewardEngine:
 
         if action_kind == "state_hypothesis" and not decision_quality_evidence:
             penalty += -0.10
-
-        if action_kind == "ask_expert":
-            history = _history(state)
-            if history and any(item.get("action_kind") == "ask_expert" for item in history[-3:]):
-                penalty += -0.05
 
         if action_kind == "run_hydrolysis_assay" and d.get("activity_assay_run", False):
             penalty += -0.05

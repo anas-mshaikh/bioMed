@@ -539,7 +539,7 @@ class BioMedEvaluationSuite:
             "bottleneck_accuracy": _mean(bottleneck_scores),
             "intervention_family_accuracy": _mean(family_scores),
             "stop_go_accuracy": _mean(stop_scores),
-            "info_gain_per_cost": _mean(info_gain_per_cost_values),
+            "info_gain_per_cost": _mean(info_gain_per_cost_values) if info_gain_per_cost_values else float("nan"),
             "expert_usefulness_score": _mean(expert_scores) if expert_scores else float("nan"),
             "expert_usefulness_known_fraction": (
                 expert_known_episode_count / len(trajectories)
