@@ -51,8 +51,10 @@ from .contract import (
 from .observation import ActionSpec, BioMedObservation, EpisodeInfo, ResourceSnapshot
 from .reward import RewardBreakdown
 from .semantics import (
+    ACTION_COMPLETION_DISCOVERY_KEYS,
     action_spec,
     action_specs,
+    completed_action_kinds,
     completed_canonical_milestones,
     infer_true_family,
     infer_true_bottleneck,
@@ -120,10 +122,12 @@ __all__ = [
     "RewardKey",
     "ScenarioFamily",
     "Stage",
+    "ACTION_COMPLETION_DISCOVERY_KEYS",
     "action_cost",
     "action_spec",
     "action_specs",
     "build_action",
+    "completed_action_kinds",
     "completed_canonical_milestones",
     "infer_true_family",
     "infer_true_bottleneck",

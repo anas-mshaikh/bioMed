@@ -8,6 +8,7 @@ from biomed_models import (
     BioMedAction,
     EVIDENCE_MILESTONE_KEYS,
     InterventionFamily,
+    completed_action_kinds,
     milestone_count,
     normalize_structured_expert_guidance_class,
 )
@@ -453,6 +454,10 @@ class StepRewardEngine:
         history = _history(state)
         if not history:
             return 0.0
+
+        completed_actions = completed_action_kinds(_discoveries(state))
+        if action_kind in completed_actions:
+            return -0.5
 
         recent = [str(item.get("action_kind", "")) for item in history[-4:]]
         if recent and recent[-1] == action_kind:

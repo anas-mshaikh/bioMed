@@ -749,9 +749,8 @@ def build_grpo_config(config: BioMedUnslothConfig) -> Any:
         "seed": config.seed,
         "remove_unused_columns": False,
         "log_completions": True,
-        # Some TRL versions support this, Unsloth patched GRPOConfig may not.
-        # Keep it in requested_kwargs, but only pass it if supported.
-        "chat_template_kwargs": {"enable_thinking": False},
+        # Not supported
+        # "chat_template_kwargs": {"enable_thinking": False},
         "optim": "adamw_8bit",
         "temperature": 1.0,
         "weight_decay": 0.001,

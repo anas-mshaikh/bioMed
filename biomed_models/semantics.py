@@ -13,6 +13,23 @@ from .contract import (
 )
 from .observation import ActionSpec
 
+ACTION_COMPLETION_DISCOVERY_KEYS: dict[ActionKind, str] = {
+    ActionKind.INSPECT_FEEDSTOCK: "feedstock_inspected",
+    ActionKind.MEASURE_CRYSTALLINITY: "crystallinity_measured",
+    ActionKind.MEASURE_CONTAMINATION: "contamination_measured",
+    ActionKind.ESTIMATE_PARTICLE_SIZE: "particle_size_estimated",
+    ActionKind.QUERY_LITERATURE: "literature_reviewed",
+    ActionKind.QUERY_CANDIDATE_REGISTRY: "candidate_registry_queried",
+    ActionKind.ESTIMATE_STABILITY_SIGNAL: "stability_signal_estimated",
+    ActionKind.RUN_HYDROLYSIS_ASSAY: "activity_assay_run",
+    ActionKind.RUN_THERMOSTABILITY_ASSAY: "thermostability_assay_run",
+    ActionKind.TEST_PRETREATMENT: "pretreatment_tested",
+    ActionKind.TEST_COCKTAIL: "cocktail_tested",
+    ActionKind.ASK_EXPERT: "expert_consulted",
+    ActionKind.STATE_HYPOTHESIS: "hypothesis_stated",
+    ActionKind.FINALIZE_RECOMMENDATION: "final_decision_submitted",
+}
+
 EXPERT_GUIDANCE_FOLLOWUP_ACTIONS: dict[InterventionFamily, frozenset[str]] = {
     InterventionFamily.COCKTAIL: frozenset({"test_cocktail"}),
     InterventionFamily.PRETREAT_THEN_SINGLE: frozenset(
@@ -114,6 +131,23 @@ def completed_canonical_milestones(discoveries: Mapping[str, Any] | Any) -> list
         done = {str(item) for item in discoveries}
         return [key for key in EVIDENCE_MILESTONE_KEYS if key in done]
     return []
+
+
+def completed_action_kinds(discoveries: Mapping[str, Any] | Any) -> set[str]:
+    if isinstance(discoveries, Mapping):
+        return {
+            action_kind.value
+            for action_kind, discovery_key in ACTION_COMPLETION_DISCOVERY_KEYS.items()
+            if bool(discoveries.get(discovery_key, False))
+        }
+    if isinstance(discoveries, Sequence) and not isinstance(discoveries, (str, bytes, bytearray)):
+        done = {str(item) for item in discoveries}
+        return {
+            action_kind.value
+            for action_kind, discovery_key in ACTION_COMPLETION_DISCOVERY_KEYS.items()
+            if discovery_key in done
+        }
+    return set()
 
 
 def infer_true_family(best_intervention_family: str | InterventionFamily) -> InterventionFamily:

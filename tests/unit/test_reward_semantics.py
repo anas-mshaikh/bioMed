@@ -138,6 +138,27 @@ def test_late_assay_ordering_is_route_sensitive(
     assert correct_score > wrong_score >= generic_score
 
 
+@pytest.mark.parametrize(
+    ("action_kind", "discovery_key"),
+    [
+        (ActionKind.INSPECT_FEEDSTOCK, "feedstock_inspected"),
+        (ActionKind.QUERY_CANDIDATE_REGISTRY, "candidate_registry_queried"),
+        (ActionKind.TEST_COCKTAIL, "cocktail_tested"),
+    ],
+)
+def test_completed_action_repeats_get_strong_penalty(
+    action_kind: ActionKind,
+    discovery_key: str,
+) -> None:
+    engine = _step_reward_engine()
+    state = _state({discovery_key: True})
+    state.history = [{"action_kind": "query_literature"}]
+
+    penalty = engine._redundancy_penalty(BioMedAction(action_kind=action_kind), state)
+
+    assert penalty == pytest.approx(-0.5)
+
+
 def test_finalize_from_reset_is_blocked() -> None:
     latent = sample_episode_latent_state(
         seed=7,
