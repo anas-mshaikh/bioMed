@@ -228,9 +228,9 @@ def to_base_config(config: BioMedUnslothConfig) -> base.BioMedTrainingConfig:
 def build_grpo_config(config: BioMedUnslothConfig) -> Any:
     from trl import GRPOConfig
 
-    # supported = set(inspect.signature(GRPOConfig.__init__).parameters)
+    supported = set(inspect.signature(GRPOConfig.__init__).parameters)
 
-    kwargs = {
+    requested_kwargs = {
         "output_dir": config.output_dir,
         "learning_rate": config.learning_rate,
         "max_steps": config.trainer_max_steps,
@@ -245,15 +245,18 @@ def build_grpo_config(config: BioMedUnslothConfig) -> Any:
         "seed": config.seed,
         "remove_unused_columns": False,
         "log_completions": True,
+        # Some TRL versions support this, Unsloth patched GRPOConfig may not.
+        # Keep it in requested_kwargs, but only pass it if supported.
         "chat_template_kwargs": {"enable_thinking": False},
     }
 
-    # filtered = {k: v for k, v in kwargs.items() if k in supported}
-    # skipped = sorted(set(kwargs) - set(filtered))
-    # if skipped:
-    #     print(f"[compat] skipped unsupported GRPOConfig fields: {skipped}")
+    filtered_kwargs = {key: value for key, value in requested_kwargs.items() if key in supported}
 
-    return GRPOConfig(**kwargs)
+    skipped = sorted(set(requested_kwargs) - set(filtered_kwargs))
+    if skipped:
+        print(f"[compat] skipped unsupported GRPOConfig fields: {skipped}")
+
+    return GRPOConfig(**filtered_kwargs)
 
 
 def build_trainer(

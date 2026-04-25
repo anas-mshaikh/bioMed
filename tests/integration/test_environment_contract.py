@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import pytest
+import json
 
 from biomed_models import ActionKind, BioMedAction, ExpertId, ExpertQueryParams
+from training.tool_env import BioMedToolEnv
 
 
 pytestmark = pytest.mark.integration
@@ -60,3 +62,15 @@ def test_hard_invalid_actions_do_not_mutate_state(fresh_env) -> None:
     assert result.rule_code == "THERMO_WITHOUT_CANDIDATES"
     assert state_before == state_after
     assert result.observation.warnings
+
+
+def test_tool_env_uses_environment_terminal_state() -> None:
+    tool_env = BioMedToolEnv()
+    tool_env.config.max_episode_steps = 0
+    tool_env.reset(seed=7, scenario_family="high_crystallinity", difficulty="easy")
+
+    payload = json.loads(tool_env.inspect_feedstock())
+
+    assert payload["phase"] == "tool_error"
+    assert payload["done"] is False
+    assert tool_env.done is False

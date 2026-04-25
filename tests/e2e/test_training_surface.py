@@ -49,5 +49,5 @@ def test_rollout_replay_stays_truth_clean() -> None:
     markdown = render_trajectory_markdown(trajectory)
 
     assert "true_bottleneck" not in markdown
-    assert "Scenario family" in markdown
+    assert "Scenario family" not in markdown
     assert dataset.benchmark_truth_sidecar()[trajectory.episode_id]["best_intervention_family"]

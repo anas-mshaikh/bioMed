@@ -196,6 +196,11 @@ FORBIDDEN_PUBLIC_DATA_KEYS: frozenset[str] = frozenset(
         "false_negative_risk",
         "scenario_family",
         "difficulty",
+        "blind_spot",
+        "misdirection_risk",
+        "knows_true_bottleneck",
+        "confidence_bias",
+        "preferred_focus",
     }
 )
 
@@ -254,4 +259,3 @@ ACTION_PARAMETER_REQUIREMENTS: dict[ActionKind, dict[str, tuple[str, ...]]] = {
 def action_cost(action_kind: ActionKind) -> tuple[float, int]:
     costs = ACTION_COSTS[action_kind]
     return float(costs["budget"]), int(costs["time_days"])
-

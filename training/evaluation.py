@@ -11,7 +11,6 @@ from biomed_models import (
     ACTION_KIND_VALUES,
     BENCHMARK_METRIC_KEYS,
     ONLINE_METRIC_KEYS,
-    PRIVATE_TRUTH_METADATA_KEYS,
     infer_true_bottleneck,
     infer_true_family,
     recommendation_has_explicit_no_go_semantics,
@@ -69,37 +68,63 @@ def _truth_summary(
 ) -> dict[str, Any]:
     if isinstance(truth_summary, dict) and truth_summary:
         return truth_summary
-    if hasattr(traj, "benchmark_truth") and callable(traj.benchmark_truth):
-        truth = traj.benchmark_truth()
-        if isinstance(truth, dict) and truth:
-            return truth
-    for key in PRIVATE_TRUTH_METADATA_KEYS:
-        truth = traj.metadata.get(key, {})
-        if isinstance(truth, dict) and truth:
-            return truth
     return {}
 
 
-def _last_recommendation(traj: Trajectory) -> dict[str, Any]:
+def _last_finalize_action(traj: Trajectory) -> dict[str, Any]:
     for step in reversed(traj.steps):
         action = step.action or {}
         if action.get("action_kind") == "finalize_recommendation":
-            params = action.get("parameters", {})
-            if isinstance(params, dict):
-                return params
+            if isinstance(action, dict):
+                return action
     return {}
 
 
+def _finalize_parameters(traj: Trajectory, *, strict: bool = False) -> dict[str, Any]:
+    recommendation = _last_finalize_action(traj)
+    if not recommendation:
+        if strict:
+            raise ValueError("Trajectory is missing a final recommendation action.")
+        return {}
+
+    params = recommendation.get("parameters", {})
+    if hasattr(params, "model_dump"):
+        dumped = params.model_dump()
+        params = dumped if isinstance(dumped, dict) else {}
+    elif not isinstance(params, dict):
+        params = {}
+
+    if strict:
+        required = ["bottleneck", "recommended_family", "decision_type", "summary"]
+        missing = sorted(key for key in required if key not in params)
+        if missing:
+            raise ValueError(
+                f"Final recommendation parameters are missing required fields: {missing}"
+            )
+        evidence = params.get("evidence_artifact_ids", [])
+        if not isinstance(evidence, list) or not evidence:
+            raise ValueError(
+                "Final recommendation parameters are missing required evidence_artifact_ids."
+            )
+
+    return dict(params)
+
+
 def _has_final_recommendation(traj: Trajectory) -> bool:
-    return bool(_last_recommendation(traj))
+    return bool(_last_finalize_action(traj))
 
 
 def _last_confidence(traj: Trajectory) -> float:
-    recommendation = _last_recommendation(traj)
+    recommendation = _last_finalize_action(traj)
+    if not recommendation:
+        raise ValueError("Trajectory is missing a final recommendation action.")
+    confidence = recommendation.get("confidence")
+    if confidence is None:
+        raise ValueError("Final recommendation is missing top-level confidence.")
     try:
-        return _clip(float(recommendation.get("confidence", 0.0)), 0.0, 1.0)
+        return _clip(float(confidence), 0.0, 1.0)
     except (TypeError, ValueError):
-        return 0.0
+        raise ValueError("Final recommendation confidence must be numeric.") from None
 
 
 def _all_actions(traj: Trajectory) -> list[str]:
@@ -155,7 +180,7 @@ def _expert_hint_was_followed(traj: Trajectory, idx: int, hint: str | None) -> b
         if isinstance(step.action, dict)
     ]
 
-    recommendation = _last_recommendation(traj)
+    recommendation = _finalize_parameters(traj)
 
     return action_sequence_follows_expert_guidance(
         guidance=hint,
@@ -168,7 +193,7 @@ def _expert_hint_was_followed(traj: Trajectory, idx: int, hint: str | None) -> b
 
 
 def _extract_predicted_bottleneck(traj: Trajectory) -> str | None:
-    rec = _last_recommendation(traj)
+    rec = _finalize_parameters(traj)
     value = rec.get("bottleneck")
     if isinstance(value, str) and value.strip():
         return value.strip().lower()
@@ -176,7 +201,7 @@ def _extract_predicted_bottleneck(traj: Trajectory) -> str | None:
 
 
 def _extract_predicted_family(traj: Trajectory) -> str | None:
-    rec = _last_recommendation(traj)
+    rec = _finalize_parameters(traj)
     value = rec.get("recommended_family")
     if isinstance(value, str) and value.strip():
         return value.strip().lower()
@@ -184,7 +209,7 @@ def _extract_predicted_family(traj: Trajectory) -> str | None:
 
 
 def _extract_predicted_stop(traj: Trajectory) -> bool | None:
-    rec = _last_recommendation(traj)
+    rec = _finalize_parameters(traj)
     if recommendation_has_explicit_stop_semantics(rec):
         return True
     if recommendation_has_explicit_go_semantics(rec):
@@ -235,6 +260,7 @@ def extract_truth_summary_from_latent(latent: Any) -> dict[str, Any]:
 
 def classify_success(traj: Trajectory, truth_summary: dict[str, Any] | None = None) -> bool:
     has_final_recommendation = _has_final_recommendation(traj)
+    recommendation = _finalize_parameters(traj)
     bottleneck_match = _alias_match(
         _extract_predicted_bottleneck(traj),
         (truth_summary or _truth_summary(traj)).get("true_bottleneck"),
@@ -249,7 +275,7 @@ def classify_success(traj: Trajectory, truth_summary: dict[str, Any] | None = No
         if truth_family == "no_go":
             stop_match = (
                 1.0
-                if recommendation_has_explicit_no_go_semantics(_last_recommendation(traj))
+                if recommendation_has_explicit_no_go_semantics(recommendation)
                 else 0.0
             )
         else:
@@ -310,16 +336,9 @@ class BioMedEvaluationSuite:
         if not trajectories:
             return _zero_metric_map(metric_keys)
 
-        if all(not step.reward_breakdown for traj in trajectories for step in traj.steps):
+        if any(not step.reward_breakdown for traj in trajectories for step in traj.steps):
             raise ValueError(
-                "All trajectory reward_breakdown values are empty; benchmark metrics are not trustworthy."
-            )
-        if all(
-            not (dataset._benchmark_truth_sidecar.get(traj.episode_id) or _truth_summary(traj))
-            for traj in trajectories
-        ):
-            raise ValueError(
-                "All trajectory truth summaries are missing; benchmark metrics are not trustworthy."
+                "A trajectory step is missing reward_breakdown; benchmark metrics are not trustworthy."
             )
 
         no_hard_violation_episodes = []
@@ -336,9 +355,12 @@ class BioMedEvaluationSuite:
         total_steps = 0
 
         for traj in trajectories:
-            truth = _truth_summary(traj, dataset._benchmark_truth_sidecar.get(traj.episode_id))
-            if not truth:
-                truth = _truth_summary(traj)
+            truth = dataset._benchmark_truth_sidecar.get(traj.episode_id)
+            if not isinstance(truth, dict) or not truth:
+                raise ValueError(
+                    f"Missing private truth sidecar for episode_id={traj.episode_id!r}; benchmark metrics are not trustworthy."
+                )
+            finalize_params = _finalize_parameters(traj, strict=True)
             hard_episode_count = 0
             info_gain_total = 0.0
             expert_uses = 0
@@ -368,13 +390,13 @@ class BioMedEvaluationSuite:
 
             bottleneck_scores.append(
                 _alias_match(
-                    _extract_predicted_bottleneck(traj),
+                    str(finalize_params.get("bottleneck", "")).strip().lower(),
                     truth.get("true_bottleneck"),
                 )
             )
             family_scores.append(
                 _alias_match(
-                    _extract_predicted_family(traj),
+                    str(finalize_params.get("recommended_family", "")).strip().lower(),
                     truth.get("best_intervention_family"),
                 )
             )
@@ -384,7 +406,7 @@ class BioMedEvaluationSuite:
                 if truth_family == "no_go":
                     stop_scores.append(
                         1.0
-                        if recommendation_has_explicit_no_go_semantics(_last_recommendation(traj))
+                        if recommendation_has_explicit_no_go_semantics(finalize_params)
                         else 0.0
                     )
                 else:
@@ -392,7 +414,8 @@ class BioMedEvaluationSuite:
                     stop_scores.append(
                         1.0
                         if predicted_stop is False
-                        and _extract_predicted_family(traj) not in {None, "no_go"}
+                        and str(finalize_params.get("recommended_family", "")).strip().lower()
+                        not in {"", "no_go"}
                         else 0.0
                     )
             elif truth_family:

@@ -40,3 +40,22 @@ def test_hidden_scenario_labels_do_not_leak_to_public_contract() -> None:
     assert "difficulty" not in observation.model_dump(mode="json")
     assert "scenario_family" not in visible_state.model_dump(mode="json")
     assert "difficulty" not in visible_state.model_dump(mode="json")
+
+
+def test_task_summary_is_scenario_invariant() -> None:
+    families = [
+        "high_crystallinity",
+        "thermostability_bottleneck",
+        "contamination_artifact",
+        "no_go",
+    ]
+    summaries = set()
+    for family in families:
+        env = BioMedEnvironment()
+        observation = env.reset(seed=7, scenario_family=family, difficulty="easy")
+        public = observation.model_dump(mode="json")
+        summary = public["task_summary"]
+        summaries.add(summary)
+        assert family not in summary
+        assert "difficulty" not in summary
+    assert len(summaries) == 1

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from biomed_models import (
+    ACTION_PARAMETER_REQUIREMENTS,
     ActionKind,
     BioMedAction,
     BottleneckKind,
@@ -25,6 +26,17 @@ def parse_action_payload(payload: Mapping[str, Any]) -> BioMedAction:
 def parse_tool_call(tool_name: str, arguments: Mapping[str, Any] | None = None) -> BioMedAction:
     args = dict(arguments or {})
     action_kind = ActionKind(tool_name)
+    requirements = ACTION_PARAMETER_REQUIREMENTS[action_kind]
+    allowed_keys = set(requirements["required"]) | set(requirements["optional"])
+    unknown_keys = sorted(set(args) - allowed_keys)
+    missing_keys = sorted(key for key in requirements["required"] if key not in args)
+    if unknown_keys or missing_keys:
+        pieces = []
+        if missing_keys:
+            pieces.append(f"missing={missing_keys}")
+        if unknown_keys:
+            pieces.append(f"unknown={unknown_keys}")
+        raise ValueError(f"Invalid arguments for {action_kind.value}: {', '.join(pieces)}")
 
     if action_kind == ActionKind.QUERY_LITERATURE:
         parameters: object = LiteratureQueryParams(query_focus=args.get("query_focus"))

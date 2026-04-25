@@ -78,7 +78,6 @@ class TrajectoryStep:
     visible_state: dict[str, Any] | None = None
     legal_next_actions: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    latent_snapshot: dict[str, Any] | None = None
     timestamp_utc: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
     schema_version: str = SCHEMA_VERSION
 
@@ -94,13 +93,29 @@ class TrajectoryStep:
             "visible_state": to_serializable(self.visible_state),
             "legal_next_actions": to_serializable(self.legal_next_actions),
             "warnings": [str(x) for x in self.warnings],
-            "latent_snapshot": to_serializable(self.latent_snapshot),
             "timestamp_utc": self.timestamp_utc,
             "schema_version": self.schema_version,
         }
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "TrajectoryStep":
+        allowed_keys = {
+            "step_index",
+            "action",
+            "observation",
+            "reward",
+            "done",
+            "reward_breakdown",
+            "info",
+            "visible_state",
+            "legal_next_actions",
+            "warnings",
+            "timestamp_utc",
+            "schema_version",
+        }
+        extra_keys = sorted(set(payload) - allowed_keys)
+        if extra_keys:
+            raise ValueError(f"Unknown trajectory step fields: {extra_keys}")
         return cls(
             step_index=int(payload.get("step_index", 0)),
             action=dict(payload.get("action", {})),
@@ -112,7 +127,6 @@ class TrajectoryStep:
             visible_state=payload.get("visible_state"),
             legal_next_actions=_normalize_legal_action_specs(payload.get("legal_next_actions", [])),
             warnings=[str(x) for x in payload.get("warnings", [])],
-            latent_snapshot=payload.get("latent_snapshot"),
             timestamp_utc=str(payload.get("timestamp_utc", "")),
             schema_version=str(payload.get("schema_version", SCHEMA_VERSION)),
         )
@@ -128,7 +142,6 @@ class Trajectory:
     steps: list[TrajectoryStep] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     success: bool | None = None
-    _benchmark_truth: dict[str, Any] = field(default_factory=dict, repr=False)
     schema_version: str = SCHEMA_VERSION
 
     def add_step(
@@ -143,7 +156,6 @@ class Trajectory:
         visible_state: Any = None,
         legal_next_actions: Sequence[Any] | None = None,
         warnings: Sequence[str] | None = None,
-        latent_snapshot: Mapping[str, Any] | None = None,
     ) -> None:
         step = TrajectoryStep(
             step_index=len(self.steps),
@@ -156,7 +168,6 @@ class Trajectory:
             visible_state=to_serializable(visible_state),
             legal_next_actions=_normalize_legal_action_specs(legal_next_actions or []),
             warnings=[str(x) for x in (warnings or [])],
-            latent_snapshot=dict(latent_snapshot or {}) if latent_snapshot else None,
         )
         self.steps.append(step)
 
@@ -178,22 +189,12 @@ class Trajectory:
             return None
         return str(self.steps[-1].action.get("action_kind")) if self.steps[-1].action else None
 
-    def benchmark_truth(self) -> dict[str, Any]:
-        truth = self._benchmark_truth
-        if not truth:
-            for key in PRIVATE_TRUTH_METADATA_KEYS:
-                value = self.metadata.get(key, {})
-                if isinstance(value, Mapping) and value:
-                    truth = value
-                    break
-        return dict(truth) if isinstance(truth, Mapping) else {}
-
-    def to_dict(self, *, include_benchmark_truth: bool = False) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         public_metadata = {
             str(key): value
             for key, value in self.metadata.items()
             if not str(key).startswith("_")
-            and (include_benchmark_truth or str(key) not in PRIVATE_TRUTH_METADATA_KEYS)
+            and str(key) not in PRIVATE_TRUTH_METADATA_KEYS
         }
         return {
             "episode_id": self.episode_id,
@@ -280,47 +281,30 @@ class TrajectoryDataset:
         }
 
     def benchmark_truth_sidecar(self) -> dict[str, dict[str, Any]]:
-        if self._benchmark_truth_sidecar:
-            return {
-                episode_id: dict(truth)
-                for episode_id, truth in self._benchmark_truth_sidecar.items()
-            }
-
-        sidecar: dict[str, dict[str, Any]] = {}
-        for trajectory in self.trajectories:
-            truth = trajectory.benchmark_truth()
-            if truth:
-                sidecar[trajectory.episode_id] = to_serializable(truth)
-        return sidecar
+        return {
+            episode_id: dict(truth)
+            for episode_id, truth in self._benchmark_truth_sidecar.items()
+        }
 
     def apply_truth_sidecar(self, payload: Mapping[str, Any]) -> None:
         sidecar: dict[str, dict[str, Any]] = {}
         for trajectory in self.trajectories:
             truth = payload.get(trajectory.episode_id)
             if isinstance(truth, Mapping):
-                truth_dict = dict(truth)
-                trajectory._benchmark_truth = truth_dict
-                sidecar[trajectory.episode_id] = truth_dict
+                sidecar[trajectory.episode_id] = dict(truth)
         self._benchmark_truth_sidecar = sidecar
 
     def save_jsonl(
         self,
         path: str | Path,
         *,
-        include_benchmark_truth: bool = False,
         truth_sidecar_path: str | Path | None = None,
     ) -> Path:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as f:
             for trajectory in self.trajectories:
-                f.write(
-                    json.dumps(
-                        trajectory.to_dict(include_benchmark_truth=include_benchmark_truth),
-                        ensure_ascii=False,
-                    )
-                    + "\n"
-                )
+                f.write(json.dumps(trajectory.to_dict(), ensure_ascii=False) + "\n")
         if truth_sidecar_path is not None:
             truth_sidecar = Path(truth_sidecar_path)
             truth_sidecar.parent.mkdir(parents=True, exist_ok=True)

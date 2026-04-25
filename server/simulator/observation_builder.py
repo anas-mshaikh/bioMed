@@ -88,40 +88,17 @@ def _validate_legal_actions(legal_next_actions: list[ActionKind] | None) -> list
 
 def _public_task_summary(state: LatentEpisodeState) -> str:
     """
-    Build a visible task summary for the current episode.
+    Build a scenario-invariant visible task summary for the current episode.
 
-    This may reflect the public task framing, but it should not reveal hidden truth
-    such as exact bottleneck flags or the best intervention family.
+    Public task framing should stay stable across families; scenario-specific hints
+    belong in evidence produced by actions, not in reset text.
     """
-    base = (
+    del state
+    return (
         "You are leading a PET bioremediation program under limited budget and time. "
         "Your job is to gather evidence, decide what matters most, and submit the best "
         "next program decision."
     )
-
-    if state.scenario_family == "high_crystallinity":
-        return (
-            base
-            + " Investigate whether feedstock accessibility and preprocessing matter more "
-            + "than aggressive route switching."
-        )
-    if state.scenario_family == "thermostability_bottleneck":
-        return (
-            base
-            + " Investigate whether nominal route promise holds up under realistic operating conditions."
-        )
-    if state.scenario_family == "contamination_artifact":
-        return (
-            base
-            + " Investigate whether the observed evidence is trustworthy or distorted by sample-quality issues."
-        )
-    if state.scenario_family == "no_go":
-        return (
-            base
-            + " Investigate whether any route is worth continued spend or whether the right move is to stop."
-        )
-
-    return base
 
 
 def _stage_label(state: LatentEpisodeState) -> str:
@@ -505,13 +482,18 @@ def _build_expert_inbox_from_discoveries(state: LatentEpisodeState) -> list[Expe
         if not isinstance(confidence, (int, float)):
             confidence = None
 
+        public_data = _sanitize_public_payload(dict(value))
+        if isinstance(public_data, dict):
+            public_data.pop("confidence", None)
+            public_data.pop("preferred_focus", None)
+
         messages.append(
             ExpertMessage(
                 expert_id=expert_id,
                 summary=summary,
                 confidence=confidence,
                 priority="medium",
-                data=dict(value),
+                data=public_data,
             )
         )
 

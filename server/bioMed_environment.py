@@ -182,7 +182,11 @@ class BioMedEnvironment:
             rule_result=rule_result,
         )
 
-        if self._latent.done:
+        if (
+            self._latent.done
+            and self._latent.done_reason == "final_decision_submitted"
+            and action.action_kind == ActionKind.FINALIZE_RECOMMENDATION
+        ):
             terminal_breakdown = self.reward_computer.terminal_reward(
                 state=self._latent,
                 recommendation=self._extract_recommendation(action),

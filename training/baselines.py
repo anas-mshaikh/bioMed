@@ -20,13 +20,7 @@ from biomed_models import (
     structured_expert_guidance_from_observation,
     terminal_recommendation_rationale,
 )
-from biomed_models.semantics import infer_recommendation_from_structured_signals
-
-ASSAY_ROUTE_FAMILIES = {
-    InterventionFamily.PRETREAT_THEN_SINGLE.value,
-    InterventionFamily.THERMOSTABLE_SINGLE.value,
-    InterventionFamily.COCKTAIL.value,
-}
+from biomed_models.semantics import ASSAY_ROUTE_FAMILIES, infer_recommendation_from_structured_signals
 
 
 def _obs_get(obj: Any, name: str, default: Any = None) -> Any:
@@ -37,30 +31,6 @@ def _obs_get(obj: Any, name: str, default: Any = None) -> Any:
     if isinstance(obj, dict):
         return obj.get(name, default)
     return default
-
-
-def _observation_text(observation: Any) -> str:
-    parts: list[str] = []
-    for key in ("task_summary", "stage", "warnings"):
-        value = _obs_get(observation, key)
-        if isinstance(value, str):
-            parts.append(value)
-        elif isinstance(value, list):
-            parts.extend([str(v) for v in value])
-    latest_output = _obs_get(observation, "latest_output")
-    if latest_output is not None:
-        parts.append(str(latest_output))
-    artifacts = _obs_get(observation, "artifacts", [])
-    if isinstance(artifacts, list):
-        for item in artifacts:
-            parts.append(str(item))
-
-    expert_inbox = _obs_get(observation, "expert_inbox", [])
-
-    if isinstance(expert_inbox, list):
-        for item in expert_inbox:
-            parts.append(str(item))
-    return " ".join(parts).lower()
 
 
 def _obs_list(obj: Any, name: str) -> list[Any]:
@@ -106,7 +76,6 @@ def _candidate_cards(observation: Any) -> list[dict[str, Any]]:
 def _extract_signals(observation: Any, trajectory: Any) -> dict[str, Any]:
     actions_taken = _trajectory_action_kinds(trajectory)
     cards = _candidate_cards(observation)
-    text = _observation_text(observation)
     latest_output = _latest_output_dict(observation)
     top_route = None
     for card in cards:
@@ -222,7 +191,6 @@ def _extract_signals(observation: Any, trajectory: Any) -> dict[str, Any]:
         top_route = expert_route_hint
 
     return {
-        "text": text,
         "candidate_cards": cards,
         "top_route": top_route or "thermostable_single",
         "contamination_signal": contamination_signal,
@@ -349,16 +317,8 @@ def _high_signal_priority(signals: dict[str, Any]) -> list[str]:
 
 
 def _ready_to_finalize(signals: dict[str, Any], context: dict[str, bool]) -> bool:
-    if _has_economic_no_go_evidence(signals, context):
-        return bool(context["sample"] and context["candidate"])
-    if signals["contamination_signal"]:
-        return bool(context["sample"] and context["candidate"] and context["expert"])
-    return bool(
-        context["sample"]
-        and context["candidate"]
-        and context["high_signal"]
-        and signals["decisive_evidence"] >= 1
-    )
+    del signals
+    return bool(context["sample"] and context["candidate"] and context["high_signal"])
 
 
 def _expert_guided_next_actions(
@@ -477,14 +437,19 @@ def _default_recommendation(observation: Any, trajectory: Any) -> dict[str, Any]
 
 def _choose_expert(observation: Any, trajectory: Any) -> str:
     signals = _extract_signals(observation, trajectory)
-    text = signals["text"]
     if signals["expert_guidance_class"] == "no_go" or signals["no_go_signal"]:
         return "cost_reviewer"
-    if "thermo" in text or "stability" in text:
+    if signals["expert_guidance_class"] == "thermostable_single":
         return "computational_biologist"
-    if "crystall" in text or "pretreat" in text:
+    if signals["expert_guidance_class"] == "cocktail":
         return "wet_lab_lead"
-    if "cost" in text or "scale" in text or "pilot" in text:
+    if signals["expert_guidance_class"] == "pretreat_then_single":
+        return "wet_lab_lead"
+    if signals["stability_low"] or signals["top_route"] == "thermostable_single":
+        return "computational_biologist"
+    if signals["contamination_signal"] or signals["crystallinity_high"] or signals["pretreatment_promising"]:
+        return "wet_lab_lead"
+    if signals["candidate_strength_low"] and signals["all_high_cost"]:
         return "process_engineer"
     if _count_taken(trajectory, "ask_expert") > 0:
         return "cost_reviewer"
@@ -643,10 +608,9 @@ class CostAwareHeuristicPolicy(BasePolicy):
         context = _trajectory_context(trajectory)
         signals = _extract_signals(observation, trajectory)
 
-        if _has_economic_no_go_evidence(signals, context) and "finalize_recommendation" in legal:
-            return _build_action("finalize_recommendation", observation, trajectory)
-
         if _ready_to_finalize(signals, context):
+            if _has_economic_no_go_evidence(signals, context) and "finalize_recommendation" in legal:
+                return _build_action("finalize_recommendation", observation, trajectory)
             if not context["hypothesis"] and "state_hypothesis" in legal:
                 return _build_action("state_hypothesis", observation, trajectory)
             if context["hypothesis"] and "finalize_recommendation" in legal:
@@ -663,9 +627,6 @@ class CostAwareHeuristicPolicy(BasePolicy):
 
         if not context["sample"] and "inspect_feedstock" in legal:
             return _build_action("inspect_feedstock", observation, trajectory)
-
-        if not context["candidate"] and "query_candidate_registry" in legal:
-            return _build_action("query_candidate_registry", observation, trajectory)
 
         if (
             context["candidate"]
@@ -750,9 +711,6 @@ class ExpertAugmentedHeuristicPolicy(BasePolicy):
             if action_kind in legal and _count_taken(trajectory, action_kind) == 0:
                 return _build_action(action_kind, observation, trajectory)
 
-        if _has_economic_no_go_evidence(signals, context) and "finalize_recommendation" in legal:
-            return _build_action("finalize_recommendation", observation, trajectory)
-
         if (
             _count_taken(trajectory, "ask_expert") == 0
             and context["sample"]
@@ -801,6 +759,8 @@ class ExpertAugmentedHeuristicPolicy(BasePolicy):
                     return _build_action(action_kind, observation, trajectory)
 
         if _ready_to_finalize(signals, context):
+            if _has_economic_no_go_evidence(signals, context) and "finalize_recommendation" in legal:
+                return _build_action("finalize_recommendation", observation, trajectory)
             if "finalize_recommendation" in legal and (
                 context["hypothesis"] or signals["expert_guidance_class"] is not None
             ):

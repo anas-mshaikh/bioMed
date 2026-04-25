@@ -106,7 +106,6 @@ def run_single_episode(
             visible_state=visible_state,
             legal_next_actions=list(getattr(observation, "legal_next_actions", []) or []),
             warnings=list(getattr(observation, "warnings", []) or []),
-            latent_snapshot=_latent_truth_summary(env) if capture_latent_truth else None,
         )
 
         done = bool(getattr(result, "done", False))
@@ -115,7 +114,6 @@ def run_single_episode(
     trajectory.metadata["final_visible_state"] = _state_dict(env)
     trajectory.metadata["terminated"] = done
     trajectory.metadata["max_steps_reached"] = not done and step_idx >= max_steps
-    trajectory.success = classify_success(trajectory)
 
     return trajectory
 

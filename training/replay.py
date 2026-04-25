@@ -21,24 +21,26 @@ def _legal_action_labels(legal_next_actions: list[dict[str, object]]) -> list[st
     return labels
 
 
-def render_trajectory_markdown(trajectory: Trajectory, *, show_hidden_truth: bool = False) -> str:
+def render_trajectory_markdown(
+    trajectory: Trajectory,
+    *,
+    show_hidden_truth: bool = False,
+    truth_summary: dict[str, object] | None = None,
+) -> str:
     lines: list[str] = []
     lines.append(f"# BioMed Replay — {trajectory.episode_id}")
     lines.append("")
     lines.append(f"- **Policy:** `{trajectory.policy_name}`")
-    lines.append(f"- **Scenario family:** `{trajectory.scenario_family}`")
-    lines.append(f"- **Difficulty:** `{trajectory.difficulty}`")
     lines.append(f"- **Seed:** `{trajectory.seed}`")
     lines.append(f"- **Success:** `{trajectory.success}`")
     lines.append(f"- **Total reward:** `{_fmt(trajectory.total_reward)}`")
     lines.append(f"- **Steps:** `{trajectory.num_steps}`")
     lines.append("")
 
-    terminal_truth = trajectory.benchmark_truth() if hasattr(trajectory, "benchmark_truth") else {}
-    if show_hidden_truth and terminal_truth:
+    if show_hidden_truth and truth_summary:
         lines.append("## Hidden truth summary")
         lines.append("")
-        for key, value in terminal_truth.items():
+        for key, value in truth_summary.items():
             lines.append(f"- **{key}**: `{value}`")
         lines.append("")
 
@@ -138,6 +140,7 @@ def main() -> None:
 
     if args.input.suffix == ".json":
         trajectory = Trajectory.load(args.input)
+        truth_summary: dict[str, object] = {}
     elif args.input.suffix == ".jsonl":
         dataset = TrajectoryDataset.load_jsonl(args.input, truth_sidecar_path=args.truth_sidecar)
         if not dataset.trajectories:
@@ -147,10 +150,15 @@ def main() -> None:
                 f"index={args.index} out of range for dataset of size {len(dataset.trajectories)}"
             )
         trajectory = dataset.trajectories[args.index]
+        truth_summary = dataset.benchmark_truth_sidecar().get(trajectory.episode_id, {})
     else:
         raise ValueError("Input must be a .json trajectory or .jsonl dataset.")
 
-    markdown = render_trajectory_markdown(trajectory, show_hidden_truth=args.show_hidden_truth)
+    markdown = render_trajectory_markdown(
+        trajectory,
+        show_hidden_truth=args.show_hidden_truth,
+        truth_summary=truth_summary,
+    )
 
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

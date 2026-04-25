@@ -301,14 +301,24 @@ class RuleEngine:
                 )
 
         if a == ActionKind.FINALIZE_RECOMMENDATION:
-            evidence_count = self._evidence_count(latent)
-            if evidence_count < 2:
-                soft.append(
-                    warning(
-                        "FINALIZE_TOO_EARLY",
-                        "Finalizing with very sparse evidence is allowed, but likely low quality.",
-                    )
-                )
+            missing: list[str] = []
+            if not d.get("feedstock_inspected", False):
+                missing.append("feedstock_inspected")
+            if not d.get("candidate_registry_queried", False):
+                missing.append("candidate_registry_queried")
+            if not (
+                d.get("activity_assay_run", False)
+                or d.get("thermostability_assay_run", False)
+                or d.get("pretreatment_tested", False)
+                or d.get("cocktail_tested", False)
+            ):
+                missing.append("decision_quality_evidence")
+            if missing:
+                return hard(
+                    "FINALIZE_TOO_EARLY",
+                    "Cannot finalize until sample context, candidate context, and decision-quality evidence exist.",
+                    missing,
+                ), soft
 
         return None, soft
 

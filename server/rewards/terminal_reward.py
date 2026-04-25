@@ -58,6 +58,8 @@ class TerminalRewardEngine:
         recommendation: Any,
     ) -> RewardBreakdown:
         rb = RewardBreakdown()
+        if getattr(state, "done_reason", None) != "final_decision_submitted":
+            return rb
 
         recommendation_dict = _as_dict(recommendation)
 
@@ -230,9 +232,7 @@ class TerminalRewardEngine:
         structured_no_go = predicted_family == "no_go" and predicted_stop
 
         if predicted_family == "cocktail":
-            if d.get("candidate_registry_queried", False) and (
-                d.get("cocktail_tested", False) or d.get("activity_assay_run", False)
-            ):
+            if d.get("candidate_registry_queried", False) and d.get("cocktail_tested", False):
                 score += 0.4
         elif predicted_family == "pretreat_then_single":
             if d.get("pretreatment_tested", False) or (
@@ -273,7 +273,8 @@ class TerminalRewardEngine:
             if d.get("candidate_registry_queried", False) and weak_high_cost and has_cost_guidance:
                 score += 0.4
 
-        score += 0.3 * (1.0 - budget_ratio)
-        score += 0.3 * (1.0 - time_ratio)
+        if score > 0.0:
+            score += 0.3 * (1.0 - budget_ratio)
+            score += 0.3 * (1.0 - time_ratio)
 
         return _clip(score, 0.0, 1.0)

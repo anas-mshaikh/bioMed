@@ -9,8 +9,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from datasets import Dataset
-from trl import GRPOConfig, GRPOTrainer
+from biomed_models import ActionKind, BioMedAction
 
 if __package__ is None or __package__ == "":
     repo_root = Path(__file__).resolve().parent.parent
@@ -150,7 +149,7 @@ def parse_args() -> BioMedTrainingConfig:
     )
 
 
-def build_prompt(scenario_family: str, difficulty: str) -> list[dict[str, str]]:
+def build_prompt() -> list[dict[str, str]]:
     return [
         {
             "role": "user",
@@ -158,14 +157,15 @@ def build_prompt(scenario_family: str, difficulty: str) -> list[dict[str, str]]:
                 "You are training inside BioMed, a PET bioremediation planning environment. "
                 "Use tools deliberately. Prefer cheap, information-rich actions before expensive assays. "
                 "Consult experts when uncertainty remains. Submit a final recommendation only when evidence "
-                "is sufficient or when a no-go decision is justified. "
-                f"Current curriculum hint: scenario_family={scenario_family}; difficulty={difficulty}."
+                "is sufficient or when a no-go decision is justified."
             ),
         }
     ]
 
 
 def build_train_dataset(config: BioMedTrainingConfig) -> Dataset:
+    from datasets import Dataset
+
     rows: list[dict[str, Any]] = []
     families = list(config.scenario_families)
 
@@ -173,7 +173,7 @@ def build_train_dataset(config: BioMedTrainingConfig) -> Dataset:
         family = families[idx % len(families)]
         rows.append(
             {
-                "prompt": build_prompt(family, config.difficulty),
+                "prompt": build_prompt(),
                 "seed": config.seed + idx,
                 "scenario_family": family,
                 "difficulty": config.difficulty,
@@ -286,6 +286,8 @@ def build_trainer(
     config: BioMedTrainingConfig,
     dataset: Dataset,
 ) -> GRPOTrainer:
+    from trl import GRPOConfig, GRPOTrainer
+
     env_config = build_env_config(config)
     env_factory = build_biomed_tool_env_factory(env_config)
 
@@ -347,6 +349,7 @@ def run_dry_run(config: BioMedTrainingConfig, dataset: Dataset, out_dir: Path) -
 
     smoke_tool_output: str | None = None
     smoke_error: str | None = None
+    smoke_action = BioMedAction(action_kind=ActionKind.INSPECT_FEEDSTOCK)
 
     try:
         if hasattr(env, "inspect_feedstock"):
@@ -364,6 +367,7 @@ def run_dry_run(config: BioMedTrainingConfig, dataset: Dataset, out_dir: Path) -
         "sample_row": sample,
         "public_tools": discover_public_tools(env_factory),
         "initial_observation": initial_observation,
+        "smoke_action": smoke_action.model_dump(mode="json"),
         "smoke_tool_output": smoke_tool_output,
         "smoke_error": smoke_error,
         "reward_after_smoke_call": float(getattr(env, "reward", 0.0)),

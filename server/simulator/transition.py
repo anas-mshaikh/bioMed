@@ -1090,15 +1090,14 @@ class BioMedTransitionEngine:
         else:
             if misdirect:
                 summary = (
-                    f"My instinct is to push harder on {belief.preferred_focus}, "
-                    "even if the current evidence is not fully settled there yet."
+                    "My instinct is to push harder on the current focus, "
+                    "even if the evidence is not fully settled yet."
                 )
             else:
                 summary = (
-                    f"I would focus next on {belief.preferred_focus}. "
-                    f"One blind spot to watch is {belief.blind_spot or 'none obvious'}."
+                    "I would focus next on the current leading evidence gap."
                 )
-            suggested_next = belief.preferred_focus
+            suggested_next = "clarify the current leading evidence gap"
             guidance_class = (
                 "no_go"
                 if any(
@@ -1112,8 +1111,6 @@ class BioMedTransitionEngine:
         expert_data = {
             "expert_id": expert_id,
             "suggested_next": suggested_next,
-            "preferred_focus": belief.preferred_focus,
-            "blind_spot": belief.blind_spot,
             "guidance_class": guidance_class,
         }
 

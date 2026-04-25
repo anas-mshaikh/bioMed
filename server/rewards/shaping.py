@@ -21,7 +21,8 @@ class ProgressPotential:
     Potential-based shaping over milestone completion.
 
     Design choice:
-    - terminal states return 0.0 so shaping telescopes correctly
+    - terminal states keep their milestone-based potential so the final delta
+      reflects the evidence accumulated before termination
     - score is normalized to [0, 1]
     """
 
@@ -30,9 +31,6 @@ class ProgressPotential:
         self._total_weight = sum(self.config.milestone_weights.values()) or 1.0
 
     def potential(self, state: object) -> float:
-        if bool(getattr(state, "done", False)):
-            return 0.0
-
         discoveries = _discoveries(state)
         raw = 0.0
         for key, weight in self.config.milestone_weights.items():

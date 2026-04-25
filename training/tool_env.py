@@ -329,7 +329,6 @@ class BioMedToolEnv:
 
     def _act(self, action: BioMedAction) -> str:
         if self.step_count >= self.config.max_episode_steps:
-            self.done = True
             return self._tool_error(
                 f"Max episode steps reached: {self.config.max_episode_steps}. "
                 "The agent should have finalized earlier."
