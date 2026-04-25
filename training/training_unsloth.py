@@ -1,3 +1,5 @@
+"""It does not generate a full action plan. It scores one generated next action after reconstructing history, exactly like the reference repo"""
+
 from __future__ import annotations
 
 # Critical: import Unsloth before TRL / Transformers / PEFT.
@@ -53,6 +55,11 @@ class BioMedUnslothConfig:
     max_completion_length: int = 2048
     logging_steps: int = 1
     save_steps: int = 10
+    training_mode: str = "single_action_grpo"
+    rollout_steps: int = 4
+    collection_policy: str = "heuristic"
+    invalid_action_penalty: float = -1.5
+    environment_error_penalty: float = -2.0
 
     # Safety
     dry_run: bool = False
@@ -97,6 +104,16 @@ def parse_args() -> BioMedUnslothConfig:
     parser.add_argument("--dry-run", action="store_true", default=False)
     parser.add_argument("--show-curriculum-hint", action="store_true", default=False)
 
+    parser.add_argument(
+        "--training-mode",
+        choices=["single_action_grpo"],
+        default="single_action_grpo",
+    )
+    parser.add_argument("--rollout-steps", type=int, default=4)
+    parser.add_argument("--collection-policy", choices=["heuristic", "random"], default="heuristic")
+    parser.add_argument("--invalid-action-penalty", type=float, default=-1.5)
+    parser.add_argument("--environment-error-penalty", type=float, default=-2.0)
+
     args = parser.parse_args()
     families = tuple(item.strip() for item in args.scenario_families.split(",") if item.strip())
 
@@ -126,7 +143,498 @@ def parse_args() -> BioMedUnslothConfig:
         logging_steps=args.logging_steps,
         save_steps=args.save_steps,
         dry_run=args.dry_run,
+        show_curriculum_hint=args.show_curriculum_hint,
+        training_mode=args.training_mode,
+        rollout_steps=args.rollout_steps,
+        collection_policy=args.collection_policy,
+        invalid_action_penalty=args.invalid_action_penalty,
+        environment_error_penalty=args.environment_error_penalty,
     )
+
+
+class BioMedOpenEnvReward:
+    """Reward function compatible with Unsloth/TRL GRPOTrainer."""
+
+    def __init__(self, config: BioMedUnslothConfig) -> None:
+        self.__name__ = "biomed_openenv_reward"
+        self.config = config
+
+    def __call__(
+        self,
+        completions: list[Any],
+        seed: Any = None,
+        scenario_family: Any = None,
+        difficulty: Any = None,
+        history_actions: Any = None,
+        **_: Any,
+    ) -> list[float]:
+        seeds = normalise_column(seed, len(completions))
+        families = normalise_column(scenario_family, len(completions))
+        difficulties = normalise_column(difficulty, len(completions))
+        histories = normalise_column(history_actions, len(completions))
+
+        rewards: list[float] = []
+
+        for completion, raw_seed, family, diff, raw_history in zip(
+            completions,
+            seeds,
+            families,
+            difficulties,
+            histories,
+            strict=False,
+        ):
+            try:
+                action = parse_biomed_action(extract_json_object(completion_to_text(completion)))
+            except Exception:
+                rewards.append(self.config.invalid_action_penalty)
+                continue
+
+            try:
+                reward = self._score_local(
+                    action=action,
+                    seed=int(raw_seed if raw_seed is not None else self.config.seed),
+                    scenario_family=str(family or self.config.scenario_families[0]),
+                    difficulty=str(diff or self.config.difficulty),
+                    history_actions=raw_history,
+                )
+            except Exception:
+                reward = self.config.environment_error_penalty
+
+            rewards.append(float(reward))
+
+        return rewards
+
+    def _score_local(
+        self,
+        *,
+        action: Any,
+        seed: int,
+        scenario_family: str,
+        difficulty: str,
+        history_actions: Any,
+    ) -> float:
+        from server.bioMed_environment import BioMedEnvironment
+
+        env = BioMedEnvironment()
+        result = env.reset(
+            seed=seed,
+            scenario_family=scenario_family,
+            difficulty=difficulty,
+        )
+
+        obs = result
+
+        for prev_action in decode_history_actions(history_actions):
+            step_result = env.step(prev_action)
+            obs = step_result.observation if hasattr(step_result, "observation") else step_result
+            if getattr(step_result, "done", False) or getattr(obs, "done", False):
+                return float(getattr(step_result, "reward", 0.0) or 0.0)
+
+        step_result = env.step(action)
+
+        # Prefer environment/training reward if available, else step reward.
+        reward = getattr(step_result, "reward", None)
+        if reward is None and hasattr(step_result, "observation"):
+            reward = getattr(step_result.observation, "reward", None)
+
+        return float(reward or 0.0)
+
+
+def completion_to_text(completion: Any) -> str:
+    if isinstance(completion, str):
+        return completion.strip()
+
+    if isinstance(completion, dict):
+        content = completion.get("content", "")
+        if isinstance(content, str):
+            return content.strip()
+        return str(content).strip()
+
+    if isinstance(completion, list):
+        for item in reversed(completion):
+            if isinstance(item, dict) and "content" in item:
+                return str(item["content"]).strip()
+        return "\n".join(str(x) for x in completion).strip()
+
+    return str(completion).strip()
+
+
+def extract_json_object(text: str) -> dict[str, Any]:
+    text = text.strip()
+
+    if text.startswith("```"):
+        text = text.strip("`").strip()
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+
+    try:
+        value = json.loads(text)
+        if isinstance(value, dict):
+            return value
+    except Exception:
+        pass
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        value = json.loads(text[start : end + 1])
+        if isinstance(value, dict):
+            return value
+
+    raise ValueError("Could not parse JSON object.")
+
+
+def parse_biomed_action(payload: dict[str, Any]) -> Any:
+    from models import (
+        ActionKind,
+        BioMedAction,
+        BottleneckKind,
+        CandidateRegistryQueryParams,
+        DecisionType,
+        ExpertId,
+        ExpertQueryParams,
+        FinalRecommendationParams,
+        HydrolysisAssayParams,
+        HypothesisParams,
+        InterventionFamily,
+        LiteratureQueryParams,
+    )
+
+    kind = payload.get("action_kind")
+
+    common = {
+        "rationale": str(payload.get("rationale") or ""),
+        "confidence": payload.get("confidence"),
+    }
+
+    if kind == "inspect_feedstock":
+        return BioMedAction(action_kind=ActionKind.INSPECT_FEEDSTOCK, **common)
+
+    if kind == "query_literature":
+        return BioMedAction(
+            action_kind=ActionKind.QUERY_LITERATURE,
+            parameters=LiteratureQueryParams(
+                query_focus=payload.get("query_focus"),
+            ),
+            **common,
+        )
+
+    if kind == "query_candidate_registry":
+        family_hint = payload.get("family_hint")
+        return BioMedAction(
+            action_kind=ActionKind.QUERY_CANDIDATE_REGISTRY,
+            parameters=CandidateRegistryQueryParams(
+                family_hint=InterventionFamily(family_hint) if family_hint else None,
+            ),
+            **common,
+        )
+
+    if kind == "run_hydrolysis_assay":
+        return BioMedAction(
+            action_kind=ActionKind.RUN_HYDROLYSIS_ASSAY,
+            parameters=HydrolysisAssayParams(
+                candidate_family=InterventionFamily(payload.get("candidate_family")),
+                pretreated=bool(payload.get("pretreated", False)),
+            ),
+            **common,
+        )
+
+    if kind == "ask_expert":
+        return BioMedAction(
+            action_kind=ActionKind.ASK_EXPERT,
+            parameters=ExpertQueryParams(
+                expert_id=ExpertId(payload.get("expert_id")),
+                question=payload.get("question"),
+            ),
+            **common,
+        )
+
+    if kind == "state_hypothesis":
+        return BioMedAction(
+            action_kind=ActionKind.STATE_HYPOTHESIS,
+            parameters=HypothesisParams(
+                hypothesis=str(payload.get("hypothesis") or ""),
+            ),
+            **common,
+        )
+
+    if kind == "finalize_recommendation":
+        return BioMedAction(
+            action_kind=ActionKind.FINALIZE_RECOMMENDATION,
+            parameters=FinalRecommendationParams(
+                bottleneck=BottleneckKind(payload.get("bottleneck")),
+                recommended_family=InterventionFamily(payload.get("recommended_family")),
+                decision_type=DecisionType(payload.get("decision_type")),
+                summary=str(payload.get("summary") or ""),
+                evidence_artifact_ids=payload.get("evidence_artifact_ids") or [],
+            ),
+            **common,
+        )
+
+    raise ValueError(f"Unknown action_kind: {kind!r}")
+
+
+def decode_history_actions(raw: Any) -> list[Any]:
+    if not raw:
+        return []
+
+    from models import BioMedAction
+
+    if isinstance(raw, list):
+        items = raw
+    else:
+        items = json.loads(raw)
+
+    actions = []
+    for item in items:
+        if isinstance(item, dict):
+            actions.append(BioMedAction(**item))
+    return actions
+
+
+def normalise_column(values: Any, length: int) -> list[Any]:
+    if values is None:
+        return [None] * length
+    if isinstance(values, list):
+        if len(values) == length:
+            return values
+        if len(values) == 1:
+            return values * length
+        return values[:length] + [None] * max(0, length - len(values))
+    return [values] * length
+
+
+def render_obs_for_prompt(obs: Any) -> str:
+    payload = obs.model_dump(mode="json") if hasattr(obs, "model_dump") else obs
+
+    # Avoid duplicating huge fields.
+    if isinstance(payload, dict):
+        payload.pop("metadata", None)
+        payload.pop("reward", None)
+
+    raw = json.dumps(payload, ensure_ascii=False, default=str)
+    return raw[:1800]
+
+
+def action_to_json(action: Any) -> str:
+    if hasattr(action, "model_dump"):
+        data = action.model_dump(mode="json")
+    else:
+        data = dict(action)
+    return json.dumps(data, ensure_ascii=False, default=str)
+
+
+def build_unsloth_prompt_examples(config: BioMedUnslothConfig) -> list[dict[str, Any]]:
+    from server.bioMed_environment import BioMedEnvironment
+
+    examples: list[dict[str, Any]] = []
+    families = list(config.scenario_families)
+
+    for episode_idx in range(config.dataset_episodes):
+        family = families[episode_idx % len(families)]
+        seed = config.seed + episode_idx
+
+        env = BioMedEnvironment()
+        obs = env.reset(
+            seed=seed,
+            scenario_family=family,
+            difficulty=config.difficulty,
+        )
+
+        history_actions: list[Any] = []
+
+        for step_idx in range(config.rollout_steps):
+            if getattr(obs, "done", False):
+                break
+
+            observation_text = render_obs_for_prompt(obs)
+            examples.append(
+                {
+                    "prompt": build_action_prompt(observation_text),
+                    "seed": seed,
+                    "scenario_family": family,
+                    "difficulty": config.difficulty,
+                    "history_actions": json.dumps(
+                        [
+                            action.model_dump(mode="json")
+                            if hasattr(action, "model_dump")
+                            else action
+                            for action in history_actions
+                        ],
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                }
+            )
+
+            selected_kind = select_collection_action(
+                obs,
+                step_idx=step_idx,
+                policy=config.collection_policy,
+            )
+            action = make_heuristic_action(selected_kind)
+            history_actions.append(action)
+            result = env.step(action)
+            obs = result.observation if hasattr(result, "observation") else result
+
+    return examples
+
+
+def make_heuristic_action(action_kind: str) -> Any:
+    from models import (
+        ActionKind,
+        BioMedAction,
+        CandidateRegistryQueryParams,
+        ExpertId,
+        ExpertQueryParams,
+        HydrolysisAssayParams,
+        HypothesisParams,
+        InterventionFamily,
+        LiteratureQueryParams,
+    )
+
+    if action_kind == "inspect_feedstock":
+        return BioMedAction(
+            action_kind=ActionKind.INSPECT_FEEDSTOCK,
+            rationale="Collect cheap first-pass feedstock evidence.",
+            confidence=0.5,
+        )
+
+    if action_kind == "query_literature":
+        return BioMedAction(
+            action_kind=ActionKind.QUERY_LITERATURE,
+            parameters=LiteratureQueryParams(query_focus="PET bioremediation bottleneck evidence"),
+            rationale="Gather literature context before expensive assays.",
+            confidence=0.5,
+        )
+
+    if action_kind == "query_candidate_registry":
+        return BioMedAction(
+            action_kind=ActionKind.QUERY_CANDIDATE_REGISTRY,
+            parameters=CandidateRegistryQueryParams(family_hint=None),
+            rationale="Identify plausible intervention families.",
+            confidence=0.5,
+        )
+
+    if action_kind == "run_hydrolysis_assay":
+        return BioMedAction(
+            action_kind=ActionKind.RUN_HYDROLYSIS_ASSAY,
+            parameters=HydrolysisAssayParams(
+                candidate_family=InterventionFamily.PRETREAT_THEN_SINGLE,
+                pretreated=True,
+            ),
+            rationale="Test a plausible pretreatment-supported route.",
+            confidence=0.5,
+        )
+
+    if action_kind == "ask_expert":
+        return BioMedAction(
+            action_kind=ActionKind.ASK_EXPERT,
+            parameters=ExpertQueryParams(
+                expert_id=ExpertId.WET_LAB_LEAD,
+                question="Which evidence should we collect before committing to an intervention route?",
+            ),
+            rationale="Resolve uncertainty with targeted expert input.",
+            confidence=0.5,
+        )
+
+    if action_kind == "state_hypothesis":
+        return BioMedAction(
+            action_kind=ActionKind.STATE_HYPOTHESIS,
+            parameters=HypothesisParams(
+                hypothesis="Current evidence suggests feedstock accessibility or enzyme-route fit may be limiting."
+            ),
+            rationale="Track current belief before final recommendation.",
+            confidence=0.5,
+        )
+
+    # Avoid using this during rollout collection unless truly needed.
+    return BioMedAction(
+        action_kind=ActionKind.INSPECT_FEEDSTOCK,
+        rationale="Fallback cheap evidence-gathering action.",
+        confidence=0.5,
+    )
+
+
+def select_collection_action(obs: Any, step_idx: int, policy: str) -> str:
+    legal = getattr(obs, "legal_next_actions", []) or []
+    legal_kinds = []
+    for spec in legal:
+        kind = getattr(spec, "action_kind", None)
+        if kind is not None:
+            legal_kinds.append(str(getattr(kind, "value", kind)))
+
+    if not legal_kinds:
+        return "finalize_recommendation"
+
+    if policy == "random":
+        import random
+
+        return random.choice(legal_kinds)
+
+    # Simple heuristic rollout policy.
+    preferred = [
+        "inspect_feedstock",
+        "query_literature",
+        "query_candidate_registry",
+        "run_hydrolysis_assay",
+        "ask_expert",
+        "state_hypothesis",
+        "finalize_recommendation",
+    ]
+    for action in preferred:
+        if action in legal_kinds:
+            return action
+
+    return legal_kinds[0]
+
+
+def build_action_prompt(observation_text: str) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "user",
+            "content": (
+                "You are training inside BioMed, a PET bioremediation planning benchmark.\n\n"
+                "Choose exactly one next action as valid JSON. Do not explain outside JSON.\n\n"
+                "Allowed action_kind values:\n"
+                "- inspect_feedstock\n"
+                "- query_literature\n"
+                "- query_candidate_registry\n"
+                "- run_hydrolysis_assay\n"
+                "- ask_expert\n"
+                "- state_hypothesis\n"
+                "- finalize_recommendation\n\n"
+                "Allowed intervention families:\n"
+                "- pretreat_then_single\n"
+                "- thermostable_single\n"
+                "- cocktail\n"
+                "- no_go\n\n"
+                "Allowed bottlenecks:\n"
+                "- substrate_accessibility\n"
+                "- thermostability\n"
+                "- contamination_artifact\n"
+                "- candidate_mismatch\n"
+                "- cocktail_synergy\n"
+                "- pilot_scale_risk\n"
+                "- no_viable_path\n\n"
+                "Allowed decision_type values:\n"
+                "- continue\n"
+                "- pivot\n"
+                "- no_go\n\n"
+                "JSON schemas by action:\n"
+                '{"action_kind":"inspect_feedstock","rationale":"...","confidence":0.5}\n'
+                '{"action_kind":"query_literature","query_focus":"...","rationale":"...","confidence":0.5}\n'
+                '{"action_kind":"query_candidate_registry","family_hint":null,"rationale":"...","confidence":0.5}\n'
+                '{"action_kind":"run_hydrolysis_assay","candidate_family":"pretreat_then_single","pretreated":true,"rationale":"...","confidence":0.5}\n'
+                '{"action_kind":"ask_expert","expert_id":"wet_lab_lead","question":"...","rationale":"...","confidence":0.5}\n'
+                '{"action_kind":"state_hypothesis","hypothesis":"...","rationale":"...","confidence":0.5}\n'
+                '{"action_kind":"finalize_recommendation","bottleneck":"substrate_accessibility","recommended_family":"pretreat_then_single","decision_type":"continue","summary":"...","evidence_artifact_ids":[],"rationale":"...","confidence":0.5}\n\n'
+                "Current BioMed observation:\n"
+                f"{observation_text}\n\n"
+                "Return only one JSON object."
+            ),
+        }
+    ]
 
 
 def require_unsloth() -> tuple[Any, Any]:
@@ -221,10 +729,6 @@ def to_base_config(config: BioMedUnslothConfig) -> base.BioMedTrainingConfig:
     )
 
 
-# base_config = to_base_config(config)
-# dataset = base.build_train_dataset(base_config)
-
-
 def build_grpo_config(config: BioMedUnslothConfig) -> Any:
     from trl import GRPOConfig
 
@@ -248,6 +752,13 @@ def build_grpo_config(config: BioMedUnslothConfig) -> Any:
         # Some TRL versions support this, Unsloth patched GRPOConfig may not.
         # Keep it in requested_kwargs, but only pass it if supported.
         "chat_template_kwargs": {"enable_thinking": False},
+        "optim": "adamw_8bit",
+        "temperature": 1.0,
+        "weight_decay": 0.001,
+        "warmup_ratio": 0.1,
+        "lr_scheduler_type": "linear",
+        "loss_type": "bnpo",
+        "mask_truncated_completions": True,
     }
 
     filtered_kwargs = {key: value for key, value in requested_kwargs.items() if key in supported}
@@ -265,29 +776,18 @@ def build_trainer(
     model: Any,
     tokenizer: Any,
     dataset: Dataset,
+    reward_func: Any,
 ) -> Any:
     from trl import GRPOTrainer
 
-    base_config = to_base_config(config)
-    env_config = base.build_env_config(base_config)
-    env_factory = base.build_biomed_tool_env_factory(env_config)
-
     args = build_grpo_config(config)
-
-    trainer_signature = set(inspect.signature(GRPOTrainer.__init__).parameters)
-    if "environment_factory" not in trainer_signature:
-        raise RuntimeError(
-            "Installed TRL GRPOTrainer does not support environment_factory. "
-            "Upgrade TRL/Transformers or use the standard train script fallback."
-        )
 
     return GRPOTrainer(
         model=model,
         processing_class=tokenizer,
         train_dataset=dataset,
-        reward_funcs=base.reward_func,
+        reward_funcs=reward_func,
         args=args,
-        environment_factory=env_factory,
     )
 
 
@@ -306,23 +806,23 @@ def run_load_model_only(config: BioMedUnslothConfig) -> None:
         pass
 
 
-def run_dry_run(config: BioMedUnslothConfig) -> None:
-    """
-    This gives you a fast check:
+# def run_dry_run(config: BioMedUnslothConfig) -> None:
+#     """
+#     This gives you a fast check:
 
-    dataset works
-    env reset works
-    tools work
-    reward works
-    no model download needed
-    """
+#     dataset works
+#     env reset works
+#     tools work
+#     reward works
+#     no model download needed
+#     """
 
-    base_config = to_base_config(config)
-    out_dir = Path(config.output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+#     base_config = to_base_config(config)
+#     out_dir = Path(config.output_dir)
+#     out_dir.mkdir(parents=True, exist_ok=True)
 
-    dataset = base.build_train_dataset(base_config)
-    base.run_dry_run(base_config, dataset, out_dir)
+#     dataset = base.build_train_dataset(base_config)
+# base.run_dry_run(base_config, dataset, out_dir)
 
 
 def run_training(config: BioMedUnslothConfig) -> None:
@@ -334,16 +834,60 @@ def run_training(config: BioMedUnslothConfig) -> None:
         encoding="utf-8",
     )
 
+    examples = build_unsloth_prompt_examples(config)
+    dataset = Dataset.from_list(examples)
+    reward_func = BioMedOpenEnvReward(config)
+
+    (out_dir / "dataset_preview.json").write_text(
+        json.dumps(
+            {
+                "num_examples": len(examples),
+                "first_example": examples[0] if examples else None,
+            },
+            indent=2,
+            ensure_ascii=False,
+            default=str,
+        ),
+        encoding="utf-8",
+    )
+
     if config.dry_run:
-        run_dry_run(config)
+        sample = examples[0]
+        fake_completion = {
+            "content": json.dumps(
+                {
+                    "action_kind": "inspect_feedstock",
+                    "rationale": "cheap first evidence",
+                    "confidence": 0.5,
+                }
+            )
+        }
+        rewards = reward_func(
+            completions=[fake_completion],
+            seed=[sample["seed"]],
+            scenario_family=[sample["scenario_family"]],
+            difficulty=[sample["difficulty"]],
+            history_actions=[sample["history_actions"]],
+        )
+        (out_dir / "unsloth_dry_run_report.json").write_text(
+            json.dumps(
+                {
+                    "sample": sample,
+                    "fake_completion": fake_completion,
+                    "reward": rewards[0],
+                },
+                indent=2,
+                ensure_ascii=False,
+                default=str,
+            ),
+            encoding="utf-8",
+        )
+        print(f"[unsloth-dry-run] ok -> {out_dir}")
         return
 
     if config.load_model_only:
         run_load_model_only(config)
         return
-
-    base_config = to_base_config(config)
-    dataset = base.build_train_dataset(base_config)
 
     FastLanguageModel, model, tokenizer = load_model_and_tokenizer(config)
     model = apply_lora(FastLanguageModel, model, config)
@@ -353,6 +897,7 @@ def run_training(config: BioMedUnslothConfig) -> None:
         model=model,
         tokenizer=tokenizer,
         dataset=dataset,
+        reward_func=reward_func,
     )
 
     train_output = trainer.train()
@@ -374,6 +919,7 @@ def run_training(config: BioMedUnslothConfig) -> None:
     train_metrics = dict(getattr(train_output, "metrics", {}) or {})
     log_history = list(getattr(trainer.state, "log_history", []) or [])
 
+    base_config = to_base_config(config)
     plot_manifest = base.save_training_plots(
         out_dir=out_dir,
         log_history=log_history,
