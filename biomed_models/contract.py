@@ -124,18 +124,20 @@ class OnlineMetricKey(CanonicalStrEnum):
 
 
 class BenchmarkMetricKey(CanonicalStrEnum):
-    WORKFLOW_VALIDITY_RATE = "workflow_validity_rate"
+    WORKFLOW_VALIDITY_HARD_RATE = "workflow_validity_hard_rate"
+    WORKFLOW_VALIDITY_SOFT_RATE = "workflow_validity_soft_rate"
     ORDERING_SCORE = "ordering_score"
     ACTION_DIVERSITY = "action_diversity"
     MEAN_CONCLUSION_CONFIDENCE = "mean_conclusion_confidence"
     BOTTLENECK_ACCURACY = "bottleneck_accuracy"
     INTERVENTION_FAMILY_ACCURACY = "intervention_family_accuracy"
     STOP_GO_ACCURACY = "stop_go_accuracy"
-    INFO_PER_COST = "info_per_cost"
+    INFO_GAIN_PER_COST = "info_gain_per_cost"
     EXPERT_USEFULNESS_SCORE = "expert_usefulness_score"
     EXPERT_USEFULNESS_KNOWN_FRACTION = "expert_usefulness_known_fraction"
     HARD_VIOLATION_RATE = "hard_violation_rate"
     SOFT_VIOLATION_RATE = "soft_violation_rate"
+    FINALIZATION_RATE = "finalization_rate"
 
 
 ACTION_KIND_VALUES = tuple(item.value for item in ActionKind)
@@ -167,8 +169,27 @@ EVIDENCE_MILESTONE_KEYS: tuple[str, ...] = (
     "cocktail_tested",
     "expert_consulted",
     "hypothesis_stated",
+)
+
+ASSAY_EVIDENCE_KEYS: tuple[str, ...] = (
+    "activity_assay_run",
+    "thermostability_assay_run",
+    "pretreatment_tested",
+    "cocktail_tested",
+)
+
+SAMPLE_CHARACTERIZATION_KEYS: tuple[str, ...] = (
+    "feedstock_inspected",
+    "crystallinity_measured",
+    "contamination_measured",
+    "particle_size_estimated",
+)
+
+TERMINAL_MILESTONE_KEYS: tuple[str, ...] = (
     "final_decision_submitted",
 )
+
+CANONICAL_MILESTONE_KEYS: tuple[str, ...] = EVIDENCE_MILESTONE_KEYS + TERMINAL_MILESTONE_KEYS
 
 ACTION_COSTS: dict[ActionKind, dict[str, float | int]] = {
     ActionKind.INSPECT_FEEDSTOCK: {"budget": 2.0, "time_days": 1},

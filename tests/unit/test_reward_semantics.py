@@ -309,6 +309,37 @@ def test_timeout_without_final_recommendation_has_no_terminal_correctness() -> N
         },
     )
 
+    # Correctness-weighted terms (bottleneck, family, stop-go, calibration)
+    # must not be credited when no final decision was submitted - all of
+    # those components live under the "if final_decision_submitted" branch.
+    # What the agent does receive is the ``terminal_no_finalize_penalty``
+    # so it cannot maximize step reward by never committing to a decision.
+    assert breakdown.validity == 0.0
+    assert breakdown.ordering == 0.0
+    assert breakdown.info_gain == 0.0
+    assert breakdown.efficiency == 0.0
+    assert breakdown.novelty == 0.0
+    assert breakdown.expert_management == 0.0
+    assert breakdown.penalty == 0.0
+    assert breakdown.shaping == 0.0
+    assert breakdown.terminal == engine.config.terminal_no_finalize_penalty
+    assert breakdown.total == engine.config.terminal_no_finalize_penalty
+    assert "bottleneck_score" not in breakdown.components
+    assert "family_score" not in breakdown.components
+    assert "calibration_score" not in breakdown.components
+    assert breakdown.components["no_finalize_penalty_applied"] == 1.0
+    assert breakdown.components["done_reason_index"] >= 0.0
+
+
+def test_mid_episode_non_final_action_does_not_trigger_timeout_penalty() -> None:
+    """Mid-episode evaluations (``done=False``) should still return 0."""
+    engine = _terminal_reward_engine()
+    state = _state({"feedstock_inspected": True})
+    state.done = False
+    state.done_reason = None
+
+    breakdown = engine.compute(state=state, recommendation={})
+
     assert breakdown.total == 0.0
     assert breakdown.components == {}
 

@@ -42,6 +42,22 @@ class RewardConfig:
 
     overconfidence_base_penalty: float = -3.0
 
+    # Calibration thresholds and targets. Centralizing these in
+    # :class:`RewardConfig` lets experiment sweeps change the calibration
+    # curve without editing terminal-reward logic, and makes the mapping
+    # between a trajectory's correctness and its ideal confidence explicit.
+    calibration_high_correctness: float = 0.80
+    calibration_medium_correctness: float = 0.50
+    calibration_target_high: float = 0.85
+    calibration_target_medium: float = 0.60
+    calibration_target_low: float = 0.25
+
+    # Terminal penalty applied when an episode ends (timeout / resource
+    # exhaustion) without the agent submitting a final recommendation. This
+    # prevents a reward path where the agent maximizes step reward by never
+    # committing to a decision.
+    terminal_no_finalize_penalty: float = -1.5
+
     milestone_weights: dict[str, float] = field(
         default_factory=lambda: {
             "feedstock_inspected": 1.0,

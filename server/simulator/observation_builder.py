@@ -483,7 +483,7 @@ def _build_expert_inbox_from_discoveries(state: LatentEpisodeState) -> list[Expe
         expert_id = key.split(":", 1)[1]
         summary = value.get("summary")
         if not isinstance(summary, str) or not summary.strip():
-            suggested_next = value.get("suggested_next", "no suggestion recorded")
+            suggested_next = value.get("suggested_next_action_kind", "no suggestion recorded")
             summary = f"Stored expert guidance. Suggested next focus: {suggested_next}"
 
         confidence = value.get("confidence")
@@ -527,6 +527,17 @@ class BioMedObservationBuilder:
     This is the Step 6 equivalent of the reference repo's output-generation layer,
     adapted to BioMed's public Observation/State contract.
     """
+
+    def build_visible_state(self, state: LatentEpisodeState) -> BioMedVisibleState:
+        """Return the public :class:`BioMedVisibleState` for ``state``.
+
+        This is the single source of truth for ``state()`` payloads so the
+        OpenEnv environment does not drift from the observation builder. The
+        environment layer previously maintained its own copy of this
+        projection, which filtered ``completed_milestones`` differently
+        (all-milestones vs. canonical-only) and could mask leakage bugs.
+        """
+        return _build_visible_state(state)
 
     def build_reset_bundle(
         self,

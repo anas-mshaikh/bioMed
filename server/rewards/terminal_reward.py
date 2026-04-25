@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from typing import Any
 
 from biomed_models import (
+    BOTTLENECK_KIND_VALUES,
+    INTERVENTION_FAMILY_VALUES,
     infer_true_bottleneck,
     infer_true_family,
     milestone_count,
@@ -46,6 +48,42 @@ def _as_dict(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _enum_index(value: Any, values: tuple[str, ...]) -> int:
+    """Return the index of ``value`` inside ``values`` or ``-1`` when missing.
+
+    Used to encode categorical truth labels inside
+    :attr:`RewardBreakdown.components` (which is typed ``dict[str, float]``).
+    """
+    if value is None:
+        return -1
+    normalized = str(value).strip().lower()
+    for idx, candidate in enumerate(values):
+        if candidate == normalized:
+            return idx
+    return -1
+
+
+# Canonical ordering of terminal ``done_reason`` strings. Encoded as an
+# index in :attr:`RewardBreakdown.components` so operators can tell apart
+# the distinct non-finalize termination paths (timeout vs. resource
+# exhaustion vs. error) without changing the reward schema's typing.
+_DONE_REASONS: tuple[str, ...] = (
+    "final_decision_submitted",
+    "resources_exhausted",
+    "step_limit_reached",
+    "error",
+)
+
+
+def _done_reason_index(reason: str | None) -> int:
+    if not reason:
+        return -1
+    for idx, candidate in enumerate(_DONE_REASONS):
+        if candidate == reason:
+            return idx
+    return -1
+
+
 class TerminalRewardEngine:
     def __init__(self, config: RewardConfig, potential: ProgressPotential) -> None:
         self.config = config
@@ -58,7 +96,22 @@ class TerminalRewardEngine:
         recommendation: Any,
     ) -> RewardBreakdown:
         rb = RewardBreakdown()
-        if getattr(state, "done_reason", None) != "final_decision_submitted":
+        done_reason = getattr(state, "done_reason", None)
+        if done_reason != "final_decision_submitted":
+            # Episodes that terminate without a final recommendation (timeout,
+            # step-limit, or resource exhaustion) must incur a terminal
+            # penalty. Otherwise an agent can maximize step reward by
+            # indefinitely running cheap exploration actions and never
+            # committing to a decision, which the benchmark scores as a
+            # silent failure. Only terminal (``done=True``) non-finalize
+            # endings are penalized - mid-episode reward computations pass
+            # ``done_reason=None`` and are correctly skipped.
+            if bool(getattr(state, "done", False)) and done_reason:
+                rb.terminal = self.config.terminal_no_finalize_penalty
+                rb.components["no_finalize_penalty_applied"] = 1.0
+                rb.components["done_reason_index"] = float(
+                    _done_reason_index(done_reason)
+                )
             return rb
 
         recommendation_dict = _as_dict(recommendation)
@@ -97,8 +150,20 @@ class TerminalRewardEngine:
             )
 
         rb.components["completeness"] = completeness
-        rb.components["true_bottleneck"] = 0.0
+        # ``components`` is ``dict[str, float]`` so we cannot store the string
+        # truth labels directly. We encode them as indices into the canonical
+        # enum ordering so downstream tooling can reconstruct the label (and
+        # -1 flags "unknown"). Previously this slot held a constant ``0.0``
+        # which silently masked the label and made terminal-reward diagnostics
+        # unusable during offline evaluation.
+        rb.components["true_bottleneck_index"] = float(
+            _enum_index(true_bottleneck, BOTTLENECK_KIND_VALUES)
+        )
+        rb.components["true_family_index"] = float(
+            _enum_index(true_family, INTERVENTION_FAMILY_VALUES)
+        )
         rb.components["predicted_confidence"] = confidence
+        rb.components["correctness"] = correctness
         rb.components["bottleneck_score"] = bottleneck_score
         rb.components["family_score"] = family_score
         rb.components["stop_go_score"] = stop_go_score
@@ -202,12 +267,13 @@ class TerminalRewardEngine:
         return 0.0
 
     def _calibration_score(self, correctness: float, confidence: float) -> float:
-        if correctness >= 0.80:
-            target = 0.85
-        elif correctness >= 0.50:
-            target = 0.60
+        cfg = self.config
+        if correctness >= cfg.calibration_high_correctness:
+            target = cfg.calibration_target_high
+        elif correctness >= cfg.calibration_medium_correctness:
+            target = cfg.calibration_target_medium
         else:
-            target = 0.25
+            target = cfg.calibration_target_low
 
         score = 1.0 - abs(confidence - target)
         return _clip(score, -1.0, 1.0)

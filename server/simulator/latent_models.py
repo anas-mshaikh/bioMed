@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from random import Random
 from typing import Any, Literal
 from uuid import uuid4
@@ -35,6 +35,28 @@ def _require_non_negative(value: float | int, field_name: str) -> None:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# Fixed epoch used for deterministic, simulator-internal timestamps. History
+# events in a BioMed episode are part of the benchmark artifact and must be
+# reproducible across machines and replays, so we derive them from an
+# episode-relative simulated clock rather than ``datetime.now``. The epoch
+# is deliberately in the past so rendered timestamps look realistic while
+# remaining bit-identical between runs with the same seed.
+_DETERMINISTIC_EPOCH_UTC: datetime = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+
+def _deterministic_episode_timestamp(step_index: int, time_spent_days: int) -> str:
+    """Build a reproducible ISO-8601 timestamp for history/event records.
+
+    ``step_index`` advances by seconds and ``time_spent_days`` by days, so
+    each event has a monotonic, deterministic timestamp and two events
+    within the same simulated day are still distinguishable.
+    """
+    safe_step = max(int(step_index), 0)
+    safe_days = max(int(time_spent_days), 0)
+    offset = timedelta(days=safe_days, seconds=safe_step)
+    return (_DETERMINISTIC_EPOCH_UTC + offset).isoformat()
 
 
 @dataclass
@@ -291,7 +313,12 @@ class LatentEpisodeState:
 
     done: bool = False
     done_reason: str | None = None
-    created_at_utc: str = field(default_factory=_utc_now_iso)
+    # Deterministic, episode-relative creation timestamp. Using the fixed
+    # simulator epoch keeps replays byte-identical; the wall-clock variant
+    # made snapshot tests and recorded trajectories flaky.
+    created_at_utc: str = field(
+        default_factory=lambda: _deterministic_episode_timestamp(0, 0)
+    )
 
     def __post_init__(self) -> None:
         _require_non_empty(self.episode_id, "episode_id")
@@ -383,7 +410,10 @@ class LatentEpisodeState:
         event = LatentHistoryEvent(
             step_index=self.progress.step_count,
             action_kind=action_kind,
-            timestamp_utc=_utc_now_iso(),
+            timestamp_utc=_deterministic_episode_timestamp(
+                step_index=self.progress.step_count,
+                time_spent_days=self.resources.time_spent_days,
+            ),
             summary=summary,
             budget_delta=budget_delta,
             time_delta_days=time_delta_days,

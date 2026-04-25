@@ -4,6 +4,7 @@ from collections.abc import Iterable
 
 from biomed_models import (
     ACTION_COSTS,
+    ASSAY_EVIDENCE_KEYS,
     ActionKind,
     BioMedAction,
     ExpertId,
@@ -11,6 +12,7 @@ from biomed_models import (
     HydrolysisAssayParams,
     milestone_count,
 )
+from biomed_models.semantics import has_economic_no_go_evidence_from_discoveries
 from server.simulator.latent_models import LatentEpisodeState
 from .types import RuleCheckResult, RuleDecision, RuleSeverity, RuleViolation
 
@@ -73,19 +75,13 @@ class RuleEngine:
 
         if d.get("candidate_registry_queried", False) and d.get("activity_assay_run", False):
             legal.append(ActionKind.TEST_COCKTAIL)
-        if self._has_economic_no_go_evidence(latent):
-            legal.append(ActionKind.FINALIZE_RECOMMENDATION)
-        elif (
-            d.get("feedstock_inspected", False)
-            and d.get("candidate_registry_queried", False)
-            and (
-                d.get("activity_assay_run", False)
-                or d.get("thermostability_assay_run", False)
-                or d.get("pretreatment_tested", False)
-                or d.get("cocktail_tested", False)
-            )
-            and d.get("hypothesis_stated", False)
-        ):
+        # Finalization legality must match the hard validation path exactly:
+        # the previous implementation had two branches (economic_no_go alone
+        # vs. full evidence) which disagreed with ``validate_action`` and let
+        # baselines queue FINALIZE actions that would then be blocked. The
+        # shared helper returns an empty ``missing`` list when the action is
+        # legal from both perspectives.
+        if not self._missing_finalize_prerequisites(latent):
             legal.append(ActionKind.FINALIZE_RECOMMENDATION)
 
         seen: set[ActionKind] = set()
@@ -314,21 +310,7 @@ class RuleEngine:
                 )
 
         if a == ActionKind.FINALIZE_RECOMMENDATION:
-            missing: list[str] = []
-            if not d.get("feedstock_inspected", False):
-                missing.append("feedstock_inspected")
-            if not d.get("candidate_registry_queried", False):
-                missing.append("candidate_registry_queried")
-            if not (
-                self._has_economic_no_go_evidence(latent)
-                or d.get("activity_assay_run", False)
-                or d.get("thermostability_assay_run", False)
-                or d.get("pretreatment_tested", False)
-                or d.get("cocktail_tested", False)
-            ):
-                missing.append("decision_quality_evidence")
-            if not d.get("hypothesis_stated", False):
-                missing.append("hypothesis_stated")
+            missing = self._missing_finalize_prerequisites(latent)
             if missing:
                 return hard(
                     "FINALIZE_TOO_EARLY",
@@ -338,22 +320,31 @@ class RuleEngine:
 
         return None, soft
 
-    def _has_economic_no_go_evidence(self, latent: LatentEpisodeState) -> bool:
-        d = latent.discoveries
-        shortlist = d.get("candidate_shortlist", [])
-        if not isinstance(shortlist, list) or not shortlist:
-            return False
+    def _missing_finalize_prerequisites(self, latent: LatentEpisodeState) -> list[str]:
+        """Return the list of prerequisite names that block finalization.
 
-        weak_high_cost = any(
-            isinstance(item, dict)
-            and float(item.get("visible_score", 0.0) or 0.0) < 0.58
-            and str(item.get("cost_band", "")).lower() == "high"
-            for item in shortlist
-        )
-        has_cost_reviewer = any(
-            str(key).startswith("expert_reply:cost_reviewer") for key in d
-        )
-        return bool(d.get("candidate_registry_queried", False) and weak_high_cost and has_cost_reviewer)
+        This is the single source of truth for finalize legality: both
+        ``validate_action`` (which turns the missing set into a hard violation)
+        and ``get_legal_next_actions`` (which surfaces the action in the
+        suggested set) call it. Previously the two paths diverged, producing
+        ``FINALIZE_TOO_EARLY`` failures for actions ``get_legal_next_actions``
+        had just advertised.
+        """
+        d = latent.discoveries
+        missing: list[str] = []
+        if not d.get("feedstock_inspected", False):
+            missing.append("feedstock_inspected")
+        if not d.get("candidate_registry_queried", False):
+            missing.append("candidate_registry_queried")
+        has_assay_evidence = any(d.get(key, False) for key in ASSAY_EVIDENCE_KEYS)
+        if not (self._has_economic_no_go_evidence(latent) or has_assay_evidence):
+            missing.append("decision_quality_evidence")
+        if not d.get("hypothesis_stated", False):
+            missing.append("hypothesis_stated")
+        return missing
+
+    def _has_economic_no_go_evidence(self, latent: LatentEpisodeState) -> bool:
+        return has_economic_no_go_evidence_from_discoveries(latent.discoveries)
 
     def _check_redundancy(
         self,

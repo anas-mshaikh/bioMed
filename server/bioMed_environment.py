@@ -63,17 +63,12 @@ class BioMedEnvironment:
         return self.rule_engine.get_legal_next_actions(latent)
 
     def _build_visible_state(self, latent: Any) -> BioMedVisibleState:
-        return BioMedVisibleState(
-            episode_id=self._episode_id or "",
-            step_count=latent.step_count,
-            stage=latent.stage,
-            spent_budget=latent.budget_spent,
-            budget_total=latent.budget_total,
-            spent_time_days=latent.time_spent_days,
-            time_total_days=latent.time_total_days,
-            completed_milestones=list(latent.completed_milestones),
-            history_length=len(latent.history),
-        )
+        # Delegate to the observation builder so ``env.state`` cannot drift
+        # from the observations returned from ``reset`` / ``step``. The two
+        # paths previously hand-rolled their own projections and diverged
+        # on ``completed_milestones`` (all vs. canonical-only) which silently
+        # broke benchmark tooling relying on ``state``.
+        return self.observation_builder.build_visible_state(latent)
 
     def _extract_recommendation(self, action: BioMedAction) -> dict[str, Any]:
         if action.action_kind != ActionKind.FINALIZE_RECOMMENDATION:

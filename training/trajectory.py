@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field, is_dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from statistics import mean
@@ -11,9 +11,70 @@ from typing import Any, Iterable, Mapping, Sequence
 from biomed_models import (
     DIFFICULTY_VALUES,
     PRIVATE_TRUTH_METADATA_KEYS,
+    RewardKey,
     SCENARIO_FAMILY_VALUES,
     SCHEMA_VERSION,
 )
+
+
+# Canonical top-level reward buckets that must be present (and numeric) in
+# every ``reward_breakdown`` payload. Enforced at deserialization time so
+# we fail fast on malformed or truncated trajectories before they poison
+# downstream benchmark metrics.
+_REWARD_BREAKDOWN_REQUIRED_KEYS: tuple[str, ...] = tuple(
+    key.value for key in RewardKey
+) + ("total",)
+
+
+def _coerce_reward_breakdown(
+    payload: Any,
+    *,
+    field_name: str = "reward_breakdown",
+) -> dict[str, Any]:
+    """Validate and normalize a serialized ``reward_breakdown`` dict.
+
+    Any non-mapping payload, missing required key, or non-numeric value for
+    a numeric slot raises :class:`ValueError`. ``components`` (nested dict)
+    and ``notes`` (list) are passed through unchanged.
+    """
+    if payload is None:
+        return {}
+    if not isinstance(payload, Mapping):
+        raise ValueError(
+            f"{field_name} must be a mapping, got {type(payload).__name__}"
+        )
+    normalized: dict[str, Any] = {}
+    for raw_key, raw_value in payload.items():
+        normalized[str(raw_key)] = raw_value
+
+    missing = [
+        key for key in _REWARD_BREAKDOWN_REQUIRED_KEYS if key not in normalized
+    ]
+    if missing:
+        raise ValueError(
+            f"{field_name} missing required keys: {sorted(missing)}"
+        )
+
+    for key in _REWARD_BREAKDOWN_REQUIRED_KEYS:
+        value = normalized[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(
+                f"{field_name}[{key!r}] must be numeric, got {type(value).__name__}"
+            )
+        normalized[key] = float(value)
+
+    components = normalized.get("components")
+    if components is not None and not isinstance(components, Mapping):
+        raise ValueError(
+            f"{field_name}['components'] must be a mapping when present"
+        )
+    notes = normalized.get("notes")
+    if notes is not None and not _is_sequence(notes):
+        raise ValueError(
+            f"{field_name}['notes'] must be a list when present"
+        )
+
+    return normalized
 
 
 def _is_sequence(value: Any) -> bool:
@@ -94,7 +155,9 @@ class TrajectoryStep:
     visible_state: dict[str, Any] | None = None
     legal_next_actions: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    timestamp_utc: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    timestamp_utc: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
     schema_version: str = SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -138,7 +201,10 @@ class TrajectoryStep:
             observation=dict(payload.get("observation", {})),
             reward=float(payload.get("reward", 0.0)),
             done=bool(payload.get("done", False)),
-            reward_breakdown=dict(payload.get("reward_breakdown", {})),
+            reward_breakdown=_coerce_reward_breakdown(
+                payload.get("reward_breakdown"),
+                field_name=f"step[{payload.get('step_index', '?')}].reward_breakdown",
+            ),
             info=dict(payload.get("info", {})),
             visible_state=payload.get("visible_state"),
             legal_next_actions=_normalize_legal_action_specs(payload.get("legal_next_actions", [])),
@@ -212,6 +278,12 @@ class Trajectory:
             if not str(key).startswith("_")
             and str(key) not in PRIVATE_TRUTH_METADATA_KEYS
         }
+        # ``scenario_family`` and ``difficulty`` describe the private
+        # curriculum slot used to sample the episode and are kept in the
+        # truth sidecar (see :meth:`TrajectoryDataset.benchmark_metadata_sidecar`)
+        # rather than the public JSONL. Exposing them here would leak
+        # curriculum identity into the training signal and is the
+        # longstanding contract validated by the rollout alignment tests.
         return {
             "episode_id": self.episode_id,
             "seed": int(self.seed),
@@ -340,6 +412,34 @@ class TrajectoryDataset:
                     sidecar[trajectory.episode_id] = dict(truth["truth_summary"])
                 else:
                     sidecar[trajectory.episode_id] = dict(truth)
+                # Restore ``scenario_family`` / ``difficulty`` from the
+                # sidecar so scenario-level aggregation works on reloaded
+                # datasets even though these fields are intentionally not
+                # serialized in the public JSONL (which would leak
+                # curriculum identity into the training signal).
+                scenario_family = truth.get("scenario_family")
+                if isinstance(scenario_family, str) and trajectory.scenario_family is None:
+                    try:
+                        trajectory.scenario_family = _validate_optional_enum_value(
+                            scenario_family,
+                            SCENARIO_FAMILY_VALUES,
+                            field_name="scenario_family",
+                        )
+                    except ValueError:
+                        # Silently ignore unknown scenario families on
+                        # legacy sidecars; the public payload remains
+                        # authoritative.
+                        pass
+                difficulty = truth.get("difficulty")
+                if isinstance(difficulty, str) and trajectory.difficulty is None:
+                    try:
+                        trajectory.difficulty = _validate_optional_enum_value(
+                            difficulty,
+                            DIFFICULTY_VALUES,
+                            field_name="difficulty",
+                        )
+                    except ValueError:
+                        pass
         self._benchmark_truth_sidecar = sidecar
 
     def save_jsonl(
@@ -408,13 +508,14 @@ class TrajectoryDataset:
         if n == 0:
             return {
                 "n": 0,
-                "success_rate": 0.0,
+                "success_rate": float("nan"),
                 "success_known_fraction": 0.0,
                 "mean_reward": 0.0,
                 "mean_length": 0.0,
                 "max_reward": 0.0,
                 "min_reward": 0.0,
                 "scenario_families": [],
+                "policies": [],
             }
 
         rewards = [t.total_reward for t in self.trajectories]
@@ -422,7 +523,15 @@ class TrajectoryDataset:
         known_successes = [t.success for t in self.trajectories if t.success is not None]
         success_known_fraction = len(known_successes) / n if n else 0.0
         success_values = [1.0 for value in known_successes if value is True]
-        success_rate = (sum(success_values) / len(known_successes)) if known_successes else 0.0
+        # ``success_rate`` is the empirical rate over trajectories whose truth
+        # label we actually know. When no trajectory has a known outcome this
+        # quantity is undefined; we surface NaN so callers can detect
+        # "unlabeled" rollouts rather than silently reporting 0% success.
+        success_rate = (
+            (sum(success_values) / len(known_successes))
+            if known_successes
+            else float("nan")
+        )
 
         return {
             "n": n,

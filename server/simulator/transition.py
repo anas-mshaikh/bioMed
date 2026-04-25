@@ -14,7 +14,7 @@ from biomed_models import (
     Priority,
     action_cost,
 )
-from server.simulator.latent_models import LatentEpisodeState
+from server.simulator.latent_models import LatentEpisodeState, LatentExpertBelief
 
 TransitionEffectType = OutputType
 
@@ -133,6 +133,45 @@ def _public_expert_next_action(best_family: str, *, has_candidate_context: bool)
         return ActionKind.TEST_COCKTAIL
     if has_candidate_context:
         return ActionKind.QUERY_CANDIDATE_REGISTRY
+    return ActionKind.STATE_HYPOTHESIS
+
+
+_EXPERT_FOCUS_ACTION_HINTS: tuple[tuple[tuple[str, ...], ActionKind], ...] = (
+    (("assay practicality",), ActionKind.RUN_HYDROLYSIS_ASSAY),
+    (("candidate ranking",), ActionKind.QUERY_CANDIDATE_REGISTRY),
+    (("operating stability", "thermostability"), ActionKind.RUN_THERMOSTABILITY_ASSAY),
+    (("synergy", "cocktail"), ActionKind.TEST_COCKTAIL),
+    (("pretreatment", "substrate"), ActionKind.TEST_PRETREATMENT),
+    (("economic viability", "cost", "spend"), ActionKind.STATE_HYPOTHESIS),
+)
+
+
+def _expert_next_action_from_public_signals(
+    *,
+    belief: LatentExpertBelief,
+    state: LatentEpisodeState,
+) -> ActionKind:
+    """Derive an expert's next-step hint from public signals and belief opinion.
+
+    This deliberately avoids ``state.intervention_truth`` so that uninformed or
+    misdirected experts cannot leak the true best intervention family via the
+    ``suggested_next_action_kind`` field.
+    """
+    focus = str(getattr(belief, "preferred_focus", "") or "").lower()
+    if any(token in focus for token in ("stop", "no-go", "continued spend")):
+        return ActionKind.STATE_HYPOTHESIS
+
+    for tokens, action_kind in _EXPERT_FOCUS_ACTION_HINTS:
+        if any(token in focus for token in tokens):
+            return action_kind
+
+    discoveries = state.progress.discoveries
+    if not discoveries.get("feedstock_inspected", False):
+        return ActionKind.INSPECT_FEEDSTOCK
+    if not discoveries.get("candidate_registry_queried", False):
+        return ActionKind.QUERY_CANDIDATE_REGISTRY
+    if not discoveries.get("activity_assay_run", False):
+        return ActionKind.RUN_HYDROLYSIS_ASSAY
     return ActionKind.STATE_HYPOTHESIS
 
 
@@ -706,9 +745,13 @@ class BioMedTransitionEngine:
         s.progress.stage = "triage"
         truth = s.intervention_truth
         s.progress.mark_milestone("stability_signal_estimated")
-        stability_score = 0.78 if truth.best_intervention_family == "thermostable_single" else 0.42
-        if truth.thermostability_bottleneck:
-            stability_score -= 0.12
+        # The stability signal is a coarse screen that should reflect the
+        # underlying thermostability risk only. Previous versions biased the
+        # base score by ``best_intervention_family``, which leaked the composite
+        # scenario label (thermostable vs. other) through a signal that the
+        # benchmark intends to be narrow. Noise is added symmetrically so the
+        # agent still has to corroborate the reading.
+        stability_score = 0.38 if truth.thermostability_bottleneck else 0.72
         stability_score = round(_clamp(stability_score + s.uniform(-0.05, 0.05), 0.05, 0.95), 4)
         signal = {
             "stability_signal_score": stability_score,
@@ -896,9 +939,12 @@ class BioMedTransitionEngine:
         s.progress.stage = "assay"
         truth = s.intervention_truth
         s.progress.mark_milestone("thermostability_assay_run")
-        base_score = 0.8 if not truth.thermostability_bottleneck else 0.38
-        if truth.best_intervention_family == "thermostable_single":
-            base_score += 0.16
+        # The thermostability assay only measures retention under thermal stress.
+        # Mixing ``best_intervention_family`` into the base score effectively
+        # leaked a second latent axis (the dominant intervention family) into a
+        # reading that should be discriminative for thermostability only. The
+        # assay noise below keeps the reading uncertain.
+        base_score = 0.38 if truth.thermostability_bottleneck else 0.80
         observed_retention = round(_clamp(base_score + s.uniform(-0.08, 0.08), 0.02, 0.98), 4)
         assay_data = {
             "retention_fraction": observed_retention,
@@ -991,9 +1037,11 @@ class BioMedTransitionEngine:
         s.progress.stage = "assay"
         truth = s.intervention_truth
         s.progress.mark_milestone("cocktail_tested")
+        # Synergy is measured against the ``synergy_required`` latent axis only.
+        # Previously the score was also lifted by ``best_intervention_family``
+        # which meant cocktail-dominated scenarios pushed the reading even when
+        # synergy itself was marginal, producing a redundant truth leak.
         synergy_score = 0.76 if truth.synergy_required else 0.34
-        if truth.best_intervention_family == "cocktail":
-            synergy_score += 0.10
         synergy_score = round(_clamp(synergy_score + s.uniform(-0.07, 0.07), 0.01, 0.98), 4)
         assay_data = {
             "synergy_score": synergy_score,
@@ -1110,9 +1158,17 @@ class BioMedTransitionEngine:
                 summary = (
                     "I would focus next on the most informative visible evidence gap."
                 )
-            suggested_next_action_kind = _public_expert_next_action(
-                "no_go" if any(token in str(belief.preferred_focus or "").lower() for token in ("stop", "no-go", "continued spend")) else truth.best_intervention_family.value,
-                has_candidate_context=s.progress.queried_candidate_registry,
+            # The expert does NOT know the true bottleneck in this branch (or is
+            # misdirected), so suggestions must be derived from public signals
+            # rather than ``truth.best_intervention_family``. Previously the
+            # fallback read the latent truth directly, which gave uninformed
+            # experts oracle-quality next-action hints and leaked the scenario
+            # label through the expert inbox. We now infer a plausible next
+            # action from the expert's opinion (``preferred_focus``) and the
+            # agent's observed progress.
+            suggested_next_action_kind = _expert_next_action_from_public_signals(
+                belief=belief,
+                state=s,
             )
             priority = "medium"
 
@@ -1211,13 +1267,38 @@ class BioMedTransitionEngine:
         time_delta_days: int,
     ) -> TransitionEffect:
         recommendation = _param_mapping(action)
-        recommended_family = str(recommendation.get("recommended_family", "unspecified"))
-        bottleneck = str(recommendation.get("bottleneck", "unspecified"))
-        decision_type = str(recommendation.get("decision_type", "proceed"))
+        # FinalRecommendationParams enforces these fields via Pydantic, but a
+        # caller may bypass the model (tests, replays, external wrappers) and
+        # pass a raw dict. Silent defaults like ``"unspecified"`` previously
+        # corrupted benchmark scoring because the stored decision looked valid
+        # but had no actual recommendation semantics. Validate explicitly so
+        # the failure surfaces at the transition boundary.
+        required_fields = (
+            "recommended_family",
+            "bottleneck",
+            "decision_type",
+            "summary",
+        )
+        missing = [
+            field for field in required_fields
+            if recommendation.get(field) in (None, "")
+        ]
+        evidence = recommendation.get("evidence_artifact_ids")
+        if not isinstance(evidence, list) or not evidence:
+            missing.append("evidence_artifact_ids")
+        if missing:
+            raise ValueError(
+                "finalize_recommendation requires parameters "
+                f"{sorted(missing)!r}; cannot submit a decision without structured fields."
+            )
+
+        recommended_family = str(recommendation["recommended_family"])
+        bottleneck = str(recommendation["bottleneck"])
+        decision_type = str(recommendation["decision_type"])
         decision_summary = str(
             recommendation.get("summary") or action.rationale.strip() or "Program decision submitted."
         )
-        evidence_artifact_ids = list(recommendation.get("evidence_artifact_ids", []))
+        evidence_artifact_ids = list(evidence)
 
         s.progress.stage = "decision"
         s.progress.final_decision_submitted = True

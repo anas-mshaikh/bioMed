@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import statistics
 from collections import Counter
 from dataclasses import dataclass, field
@@ -24,6 +25,7 @@ from biomed_models import (
 from .trajectory import Trajectory, TrajectoryDataset
 from biomed_models.semantics import (
     action_sequence_follows_expert_guidance,
+    recommendation_follows_expert_guidance,
 )
 
 
@@ -366,12 +368,17 @@ class BioMedEvaluationSuite:
         if not trajectories:
             return _zero_metric_map(metric_keys)
 
+        # success_rate must be undefined (NaN) when no trajectory has a known
+        # truth label: returning ``0.0`` silently conflates "no trajectories
+        # succeeded" with "we could not score any trajectories" and would make
+        # unlabeled online rollouts appear to be uniform failures. Downstream
+        # consumers treat NaN as "no signal" and route around it.
         metrics = {
             "mean_return": _mean(returns),
             "median_return": _median(returns),
             "std_return": _std(returns),
             "mean_episode_length": _mean(lengths),
-            "success_rate": _mean(successes_known),
+            "success_rate": _mean(successes_known) if successes_known else float("nan"),
             "success_known_fraction": len(known_successes) / len(trajectories),
         }
         _validate_metric_schema(metrics, metric_keys, label="online")
@@ -389,14 +396,16 @@ class BioMedEvaluationSuite:
                 "A trajectory step is missing reward_breakdown; benchmark metrics are not trustworthy."
             )
 
-        workflow_validity_episodes = []
+        workflow_validity_hard_episodes = []
+        workflow_validity_soft_episodes = []
         ordering_scores = []
         action_diversity_scores = []
         confidences = []
         bottleneck_scores = []
         family_scores = []
         stop_scores = []
-        info_per_cost_values = []
+        info_gain_per_cost_values = []
+        finalization_flags: list[float] = []
         expert_scores: list[float] = []
         expert_known_episode_count = 0
         hard_violation_steps = 0
@@ -412,7 +421,14 @@ class BioMedEvaluationSuite:
             if "truth_summary" in truth and isinstance(truth.get("truth_summary"), dict):
                 truth = truth["truth_summary"]
             _validate_truth_summary_payload(truth, episode_id=traj.episode_id)
-            finalize_params = _finalize_parameters(traj, strict=True)
+
+            has_finalization = _has_final_recommendation(traj)
+            finalization_flags.append(1.0 if has_finalization else 0.0)
+            # Benchmark scoring requires a finalization for accuracy-shaped
+            # metrics. Trajectories that time out without finalizing contribute
+            # zero to bottleneck/family/stop accuracy without raising, so a
+            # missing finalize is penalized but not fatal.
+            finalize_params = _finalize_parameters(traj, strict=has_finalization)
             hard_episode_count = 0
             soft_episode_count = 0
             info_gain_total = 0.0
@@ -438,14 +454,21 @@ class BioMedEvaluationSuite:
                     if hint is None:
                         continue
                     expert_uses += 1
-                    if _expert_hint_was_followed(traj, idx, hint):
+                    followed = _expert_hint_was_followed(traj, idx, hint)
+                    if not followed and has_finalization:
+                        followed = recommendation_follows_expert_guidance(
+                            guidance=hint,
+                            recommended_family=finalize_params.get("recommended_family"),
+                            decision_type=finalize_params.get("decision_type"),
+                        )
+                    if followed:
                         expert_useful += 1
 
-            workflow_validity_episodes.append(
-                1.0 if (hard_episode_count == 0 and soft_episode_count == 0) else 0.0
-            )
+            workflow_validity_hard_episodes.append(1.0 if hard_episode_count == 0 else 0.0)
+            workflow_validity_soft_episodes.append(1.0 if soft_episode_count == 0 else 0.0)
             ordering_scores.append(_reward_component_mean(traj, "ordering"))
-            confidences.append(_last_confidence(traj))
+            if has_finalization:
+                confidences.append(_last_confidence(traj))
 
             bottleneck_scores.append(
                 _alias_match(
@@ -461,7 +484,7 @@ class BioMedEvaluationSuite:
             )
 
             truth_family = truth.get("best_intervention_family")
-            if truth_family and _has_final_recommendation(traj):
+            if truth_family and has_finalization:
                 if truth_family == "no_go":
                     stop_scores.append(
                         1.0
@@ -490,26 +513,28 @@ class BioMedEvaluationSuite:
                 normalized_cost += spent_budget / initial_budget
             if initial_time > 0.0:
                 normalized_cost += spent_time / initial_time
-            info_per_cost_values.append(info_gain_total / max(normalized_cost, 1e-9))
+            info_gain_per_cost_values.append(info_gain_total / max(normalized_cost, 1e-9))
             if expert_uses:
                 expert_scores.append(expert_useful / expert_uses)
                 expert_known_episode_count += 1
 
         metrics = {
-            "workflow_validity_rate": _mean(workflow_validity_episodes),
+            "workflow_validity_hard_rate": _mean(workflow_validity_hard_episodes),
+            "workflow_validity_soft_rate": _mean(workflow_validity_soft_episodes),
             "ordering_score": _mean(ordering_scores),
             "action_diversity": _mean(action_diversity_scores),
-            "mean_conclusion_confidence": _mean(confidences),
+            "mean_conclusion_confidence": _mean(confidences) if confidences else float("nan"),
             "bottleneck_accuracy": _mean(bottleneck_scores),
             "intervention_family_accuracy": _mean(family_scores),
             "stop_go_accuracy": _mean(stop_scores),
-            "info_per_cost": _mean(info_per_cost_values),
-            "expert_usefulness_score": _mean(expert_scores),
+            "info_gain_per_cost": _mean(info_gain_per_cost_values),
+            "expert_usefulness_score": _mean(expert_scores) if expert_scores else float("nan"),
             "expert_usefulness_known_fraction": (
                 expert_known_episode_count / len(trajectories)
             ),
             "hard_violation_rate": (hard_violation_steps / total_steps) if total_steps else 0.0,
             "soft_violation_rate": (soft_violation_steps / total_steps) if total_steps else 0.0,
+            "finalization_rate": _mean(finalization_flags),
         }
         _validate_metric_schema(metrics, metric_keys, label="benchmark")
         return metrics

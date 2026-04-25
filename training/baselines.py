@@ -20,7 +20,11 @@ from biomed_models import (
     structured_expert_guidance_from_observation,
     terminal_recommendation_rationale,
 )
-from biomed_models.semantics import ASSAY_ROUTE_FAMILIES, infer_recommendation_from_structured_signals
+from biomed_models.semantics import (
+    ASSAY_ROUTE_FAMILIES,
+    has_economic_no_go_evidence_from_signals,
+    infer_recommendation_from_structured_signals,
+)
 
 
 def _obs_get(obj: Any, name: str, default: Any = None) -> Any:
@@ -297,12 +301,22 @@ def _first_unfinished(
 
 
 def _has_economic_no_go_evidence(signals: dict[str, Any], context: dict[str, bool]) -> bool:
-    if not context["candidate"]:
-        return False
-    if signals["economic_no_go_complete"]:
-        return True
-    return bool(
-        signals["no_go_signal"] and (signals["candidate_strength_low"] or signals["all_high_cost"])
+    """Thin wrapper around the canonical semantics helper.
+
+    Centralizing the definition via
+    :func:`biomed_models.semantics.has_economic_no_go_evidence_from_signals`
+    keeps baselines and the rule engine's legality check aligned.
+    """
+    cost_reviewer_consulted = any(
+        str(action_kind) == "ask_expert"
+        for action_kind in signals.get("actions_taken", set())
+    ) and bool(signals.get("no_go_signal", False))
+    return has_economic_no_go_evidence_from_signals(
+        candidate_present=bool(context["candidate"]),
+        candidate_strength_low=bool(signals.get("candidate_strength_low", False)),
+        all_high_cost=bool(signals.get("all_high_cost", False)),
+        cost_reviewer_consulted=cost_reviewer_consulted,
+        economic_no_go_complete=bool(signals.get("economic_no_go_complete", False)),
     )
 
 
@@ -330,8 +344,25 @@ def _high_signal_priority(signals: dict[str, Any]) -> list[str]:
 
 
 def _ready_to_finalize(signals: dict[str, Any], context: dict[str, bool]) -> bool:
-    del signals
-    return bool(context["sample"] and context["candidate"] and context["high_signal"] and context["hypothesis"])
+    """Return True when the agent has enough evidence to commit to a finalize.
+
+    We require structural context (sample + candidate + high-signal assay +
+    hypothesis) *and* that the extracted signals yield at least one decisive
+    piece of evidence. Previously ``_ready_to_finalize`` ignored ``signals``
+    entirely, which let baselines finalize after completing the minimal set of
+    actions regardless of whether the observed readings actually discriminated
+    between intervention families - producing confident recommendations with
+    no supporting signal content.
+    """
+    decisive_evidence = int(signals.get("decisive_evidence", 0) or 0)
+    economic_no_go_ready = bool(signals.get("economic_no_go_complete", False))
+    structural_ready = bool(
+        context["sample"]
+        and context["candidate"]
+        and context["high_signal"]
+        and context["hypothesis"]
+    )
+    return structural_ready and (decisive_evidence >= 1 or economic_no_go_ready)
 
 
 def _expert_guided_next_actions(
@@ -366,19 +397,35 @@ def _default_recommendation(observation: Any, trajectory: Any) -> dict[str, Any]
 
     economic_no_go = _has_economic_no_go_evidence(signals, context)
 
-    semantics = infer_recommendation_from_structured_signals(
-        top_route=signals["top_route"],
-        contamination_signal=signals["contamination_signal"],
-        cocktail_strong=signals["cocktail_strong"],
-        pretreatment_promising=signals["pretreatment_promising"],
-        crystallinity_high=signals["crystallinity_high"],
-        stability_low=signals["stability_low"],
-        economic_no_go=economic_no_go,
+    # If the baseline is forced to finalize without any decisive signal and
+    # without sufficient context, defaulting to a ``thermostable_single``
+    # proceed recommendation (the bias hidden inside
+    # ``infer_recommendation_from_structured_signals``) is a confidently-wrong
+    # answer. A ``no_go`` with low confidence is the safer calibrated fallback
+    # and correctly reflects "not enough evidence to proceed".
+    insufficient_evidence = (
+        not economic_no_go
+        and int(signals.get("decisive_evidence", 0) or 0) == 0
+        and not (context["high_signal"] and context["hypothesis"])
     )
 
-    family = semantics["recommended_family"]
-    bottleneck = semantics["bottleneck"]
-    decision_type = semantics["decision_type"]
+    if insufficient_evidence:
+        family = InterventionFamily.NO_GO.value
+        bottleneck = BottleneckKind.NO_GO.value
+        decision_type = DecisionType.NO_GO.value
+    else:
+        semantics = infer_recommendation_from_structured_signals(
+            top_route=signals["top_route"],
+            contamination_signal=signals["contamination_signal"],
+            cocktail_strong=signals["cocktail_strong"],
+            pretreatment_promising=signals["pretreatment_promising"],
+            crystallinity_high=signals["crystallinity_high"],
+            stability_low=signals["stability_low"],
+            economic_no_go=economic_no_go,
+        )
+        family = semantics["recommended_family"]
+        bottleneck = semantics["bottleneck"]
+        decision_type = semantics["decision_type"]
     continue_exploration = False
 
     confidence = 0.30
@@ -390,6 +437,8 @@ def _default_recommendation(observation: Any, trajectory: Any) -> dict[str, Any]
         confidence = 0.72
     if family == InterventionFamily.NO_GO.value and economic_no_go:
         confidence = 0.78
+    if insufficient_evidence:
+        confidence = 0.25
 
     evidence_artifact_ids = [
         str(item.get("artifact_id"))
@@ -415,17 +464,108 @@ def _default_recommendation(observation: Any, trajectory: Any) -> dict[str, Any]
 
 def _choose_expert(observation: Any, trajectory: Any) -> str:
     signals = _extract_signals(observation, trajectory)
-    if signals["no_go_signal"]:
-        return "cost_reviewer"
-    if signals["stability_low"] or signals["top_route"] == "thermostable_single":
-        return "computational_biologist"
-    if signals["contamination_signal"] or signals["crystallinity_high"] or signals["pretreatment_promising"]:
-        return "wet_lab_lead"
-    if signals["candidate_strength_low"] and signals["all_high_cost"]:
-        return "process_engineer"
-    if _count_taken(trajectory, "ask_expert") > 0:
-        return "cost_reviewer"
+    consulted_experts = _consulted_expert_ids(trajectory, observation)
+
+    ranked: list[tuple[str, bool]] = [
+        ("cost_reviewer", bool(signals.get("no_go_signal"))),
+        (
+            "computational_biologist",
+            bool(
+                signals.get("stability_low")
+                or signals.get("top_route") == "thermostable_single"
+            ),
+        ),
+        (
+            "wet_lab_lead",
+            bool(
+                signals.get("contamination_signal")
+                or signals.get("crystallinity_high")
+                or signals.get("pretreatment_promising")
+            ),
+        ),
+        (
+            "process_engineer",
+            bool(
+                signals.get("candidate_strength_low")
+                and signals.get("all_high_cost")
+            ),
+        ),
+    ]
+
+    # First preference: a high-signal expert we have not consulted yet. This
+    # replaces the old "second ask_expert always routes to cost_reviewer"
+    # shortcut, which ignored observation gaps (e.g. contamination still
+    # high) and led to duplicated, low-value consultations.
+    for expert_id, active in ranked:
+        if active and expert_id not in consulted_experts:
+            return expert_id
+
+    # Second preference: any high-signal expert, even if already consulted
+    # (signals can update between steps).
+    for expert_id, active in ranked:
+        if active:
+            return expert_id
+
+    # Fallback: pick the first expert in the canonical rotation we have not
+    # consulted yet so successive ask_expert calls explore distinct experts
+    # instead of spamming the same one.
+    fallback_order = (
+        "wet_lab_lead",
+        "computational_biologist",
+        "process_engineer",
+        "cost_reviewer",
+    )
+    for expert_id in fallback_order:
+        if expert_id not in consulted_experts:
+            return expert_id
     return "wet_lab_lead"
+
+
+def _consulted_expert_ids(trajectory: Any, observation: Any) -> set[str]:
+    """Return the set of expert_ids the agent has already consulted.
+
+    Reads from both the trajectory's action log and the observation's
+    ``expert_inbox`` so the policy works regardless of whether the caller
+    maintains a rolling trajectory.
+    """
+    consulted: set[str] = set()
+    for step in _trajectory_steps(trajectory):
+        action = getattr(step, "action", None) or (
+            step.get("action") if isinstance(step, dict) else None
+        )
+        if action is None:
+            continue
+        kind = getattr(action, "action_kind", None)
+        if kind is None and isinstance(action, dict):
+            kind = action.get("action_kind")
+        if str(kind) != "ask_expert":
+            continue
+        params = getattr(action, "parameters", None)
+        if params is None and isinstance(action, dict):
+            params = action.get("parameters")
+        expert_id = None
+        if params is not None:
+            expert_id = getattr(params, "expert_id", None)
+            if expert_id is None and isinstance(params, dict):
+                expert_id = params.get("expert_id")
+        if expert_id:
+            consulted.add(str(expert_id))
+    for message in _expert_inbox_dicts(observation):
+        expert_id = message.get("expert_id")
+        if expert_id:
+            consulted.add(str(expert_id))
+    return consulted
+
+
+def _trajectory_steps(trajectory: Any) -> list[Any]:
+    if trajectory is None:
+        return []
+    steps = getattr(trajectory, "steps", None)
+    if steps is None and isinstance(trajectory, dict):
+        steps = trajectory.get("steps")
+    if isinstance(steps, list):
+        return steps
+    return []
 
 
 def _build_action(action_kind: str, observation: Any, trajectory: Any) -> BioMedAction:

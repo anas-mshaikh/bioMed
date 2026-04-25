@@ -5,12 +5,16 @@ from typing import Any
 
 from biomed_models import (
     ACTION_COSTS,
+    ASSAY_EVIDENCE_KEYS,
     BioMedAction,
     EVIDENCE_MILESTONE_KEYS,
     InterventionFamily,
+    SAMPLE_CHARACTERIZATION_KEYS,
+    assay_evidence_count,
     completed_action_kinds,
     milestone_count,
     normalize_structured_expert_guidance_class,
+    sample_characterization_count,
 )
 from server.rules import RuleCheckResult
 from server.simulator.transition import TransitionResult
@@ -85,12 +89,7 @@ def _action_kind_and_params(action_or_kind: BioMedAction | str) -> tuple[str, Ma
 
 
 def _has_sample_context(discoveries: Mapping[str, bool]) -> bool:
-    return bool(
-        discoveries.get("feedstock_inspected", False)
-        or discoveries.get("crystallinity_measured", False)
-        or discoveries.get("contamination_measured", False)
-        or discoveries.get("particle_size_estimated", False)
-    )
+    return any(discoveries.get(key, False) for key in SAMPLE_CHARACTERIZATION_KEYS)
 
 
 def _has_candidate_context(discoveries: Mapping[str, bool]) -> bool:
@@ -101,12 +100,8 @@ def _has_candidate_context(discoveries: Mapping[str, bool]) -> bool:
 
 
 def _has_decision_quality_evidence(discoveries: Mapping[str, bool]) -> bool:
-    return bool(
-        discoveries.get("activity_assay_run", False)
-        or discoveries.get("thermostability_assay_run", False)
-        or discoveries.get("pretreatment_tested", False)
-        or discoveries.get("cocktail_tested", False)
-    )
+    """Return True iff at least one discriminating assay milestone is present."""
+    return any(discoveries.get(key, False) for key in ASSAY_EVIDENCE_KEYS)
 
 
 def _structured_expert_guidance_class(raw_discoveries: Mapping[str, Any]) -> str | None:
@@ -203,7 +198,7 @@ class StepRewardEngine:
         rb.ordering = self._ordering_score(action, prev_state)
         rb.info_gain = self._information_gain_score(output, prev_state, next_state)
         rb.efficiency = self._efficiency_score(action_kind, prev_state, next_state, rb.info_gain)
-        rb.novelty = self._novelty_score(action_kind, prev_state)
+        rb.novelty = self._novelty_score(action_kind, prev_state, next_state, milestone_delta)
         rb.expert_management = self._expert_management_score(action, prev_state)
         context_gate_penalty = 0.0
         if action_kind == "run_hydrolysis_assay":
@@ -215,7 +210,7 @@ class StepRewardEngine:
                 rb.info_gain = 0.0
                 rb.novelty = 0.0
                 context_gate_penalty = -0.25
-                rb.components["context_gated"] = 1.0
+                rb.components["context_gated_flag"] = 1.0
 
         soft_penalty = self.config.soft_violation_penalty_per_item * len(
             rule_result.soft_violations
@@ -454,13 +449,32 @@ class StepRewardEngine:
 
         return self.config.efficiency_weight * raw_eff * info_multiplier
 
-    def _novelty_score(self, action_kind: str, state: object) -> float:
-        history = _history(state)
-        if not history:
-            return self.config.novelty_reward
+    def _novelty_score(
+        self,
+        action_kind: str,
+        prev_state: object,
+        next_state: object,
+        milestone_delta: int,
+    ) -> float:
+        """Reward genuinely novel actions that produce investigative progress.
 
-        recent_actions = [str(item.get("action_kind", "")) for item in history[-5:]]
+        Novelty is awarded only when (a) the action kind has not appeared in
+        recent history and (b) the step actually yielded new evidence. Without
+        the second gate an agent can farm novelty by rotating between cheap
+        no-op actions (e.g. repeated ``state_hypothesis`` attempts) that never
+        surface new information.
+        """
+        history = _history(prev_state)
+        recent_actions = {str(item.get("action_kind", "")) for item in history[-5:]}
         if action_kind in recent_actions:
+            return 0.0
+
+        if milestone_delta <= 0:
+            # Allow a small novelty bonus only on the very first action of an
+            # episode so cold-start exploration is not zeroed out; afterwards we
+            # require real progress.
+            if not history:
+                return self.config.novelty_reward
             return 0.0
 
         return self.config.novelty_reward
