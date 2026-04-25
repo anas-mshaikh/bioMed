@@ -29,6 +29,8 @@ from biomed_models.semantics import (
     recommendation_follows_expert_guidance,
 )
 
+_MIN_NORMALIZED_COST_FOR_INFO_RATIO = 0.05
+
 
 def _mean(values: list[float]) -> float:
     return statistics.mean(values) if values else 0.0
@@ -171,7 +173,6 @@ _WORKFLOW_CATEGORIES: dict[str, str] = {
     "test_cocktail": "assay_evidence",
     "ask_expert": "expert_consultation",
     "state_hypothesis": "hypothesis",
-    "finalize_recommendation": "final_recommendation",
 }
 
 
@@ -184,7 +185,8 @@ def _trajectory_action_diversity(traj: Trajectory) -> float:
         category for action in actions if (category := _WORKFLOW_CATEGORIES.get(action))
     )
     covered_categories = len(category_counts)
-    coverage = covered_categories / 6.0
+    distinct_categories = set(_WORKFLOW_CATEGORIES.values())
+    coverage = covered_categories / max(float(len(distinct_categories)), 1.0)
 
     repeated_actions = sum(max(0, count - 1) for count in Counter(actions).values())
     filler_penalty = min(0.5, repeated_actions / max(len(actions), 1) * 0.5)
@@ -464,6 +466,12 @@ class BioMedEvaluationSuite:
                         continue
                     expert_uses += 1
                     followed = _expert_hint_was_followed(traj, idx, hint)
+                    if not followed and has_finalization:
+                        followed = recommendation_follows_expert_guidance(
+                            guidance=hint,
+                            recommended_family=finalize_params.get("recommended_family"),
+                            decision_type=finalize_params.get("decision_type"),
+                        )
                     if followed:
                         expert_useful += 1
 
@@ -516,7 +524,8 @@ class BioMedEvaluationSuite:
                 normalized_cost += spent_budget / initial_budget
             if initial_time > 0.0:
                 normalized_cost += spent_time / initial_time
-            info_gain_per_cost_values.append(info_gain_total / max(normalized_cost, 1e-9))
+            if normalized_cost >= _MIN_NORMALIZED_COST_FOR_INFO_RATIO:
+                info_gain_per_cost_values.append(info_gain_total / normalized_cost)
             if expert_uses:
                 expert_scores.append(expert_useful / expert_uses)
                 expert_known_episode_count += 1
@@ -535,8 +544,8 @@ class BioMedEvaluationSuite:
             "expert_usefulness_known_fraction": (
                 expert_known_episode_count / len(trajectories)
             ),
-            "hard_violation_rate": (hard_violation_steps / total_steps) if total_steps else 0.0,
-            "soft_violation_rate": (soft_violation_steps / total_steps) if total_steps else 0.0,
+            "hard_violation_step_rate": (hard_violation_steps / total_steps) if total_steps else 0.0,
+            "soft_violation_step_rate": (soft_violation_steps / total_steps) if total_steps else 0.0,
             "finalization_rate": _mean(finalization_flags),
         }
         _validate_metric_schema(metrics, metric_keys, label="benchmark")
@@ -544,6 +553,12 @@ class BioMedEvaluationSuite:
 
     @staticmethod
     def scenario_breakdown(dataset: TrajectoryDataset) -> dict[str, dict[str, float]]:
+        if any(traj.scenario_family is None for traj in dataset.trajectories):
+            raise ValueError(
+                "Scenario breakdown requires scenario_family on all trajectories. "
+                "Load the benchmark metadata sidecar or include scenario identifiers "
+                "in the dataset before computing per-scenario metrics."
+            )
         grouped = dataset.group_by_scenario_family()
         breakdown: dict[str, dict[str, float]] = {}
         for scenario_family, subset in grouped.items():

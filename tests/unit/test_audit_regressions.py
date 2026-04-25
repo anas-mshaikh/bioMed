@@ -9,16 +9,21 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from biomed_models import (
     ASSAY_EVIDENCE_KEYS,
     BOTTLENECK_KIND_VALUES,
+    ActionKind,
+    BioMedAction,
     BottleneckKind,
     CANONICAL_MILESTONE_KEYS,
     DecisionType,
     EVIDENCE_MILESTONE_KEYS,
+    ExpertId,
+    ExpertQueryParams,
     EXPERT_GUIDANCE_FOLLOWUP_WINDOW,
     INTERVENTION_FAMILY_ANCHOR_ACTION,
     INTERVENTION_FAMILY_VALUES,
@@ -37,7 +42,11 @@ from biomed_models import (
 from biomed_models.contract import BenchmarkMetricKey
 from server.rewards.reward_config import RewardConfig
 from server.rewards.shaping import ProgressPotential
+from server.rewards.step_reward import StepRewardEngine
 from server.rewards.terminal_reward import TerminalRewardEngine
+from training.baselines import _has_economic_no_go_evidence, build_policy
+from training.evaluation import BioMedEvaluationSuite, _trajectory_action_diversity
+from training.trajectory import TrajectoryDataset
 from server.simulator.latent_models import (
     _DETERMINISTIC_EPOCH_UTC,
     _deterministic_episode_timestamp,
@@ -87,8 +96,12 @@ def test_benchmark_metric_keys_are_split_and_renamed() -> None:
     assert "workflow_validity_soft_rate" in names
     assert "info_gain_per_cost" in names
     assert "finalization_rate" in names
+    assert "hard_violation_step_rate" in names
+    assert "soft_violation_step_rate" in names
     assert "info_per_cost" not in names
     assert "workflow_validity_rate" not in names
+    assert "hard_violation_rate" not in names
+    assert "soft_violation_rate" not in names
 
 
 # ----- Issue 17 ---------------------------------------------------------
@@ -439,3 +452,313 @@ def test_expert_next_action_suggestion_does_not_use_truth_family() -> None:
         transition._expert_next_action_from_public_signals  # type: ignore[attr-defined]
     )
     assert "best_intervention_family" not in source
+
+
+# ----- New fixes: reward/eval/policy/metrics alignment -------------------
+
+
+def _step_reward_engine() -> StepRewardEngine:
+    config = RewardConfig()
+    return StepRewardEngine(config, ProgressPotential(config))
+
+
+def _state(discoveries: dict[str, Any]) -> SimpleNamespace:
+    return SimpleNamespace(
+        discoveries=discoveries,
+        history=[],
+        budget_spent=0.0,
+        budget_total=10.0,
+        time_spent_days=0,
+        time_total_days=8,
+    )
+
+
+def test_finalize_ordering_recognizes_economic_no_go_path() -> None:
+    engine = _step_reward_engine()
+    discoveries = {
+        "feedstock_inspected": True,
+        "candidate_registry_queried": True,
+        "hypothesis_stated": True,
+        # No assay evidence on purpose.
+        "candidate_shortlist": [{"visible_score": 0.52, "cost_band": "high"}],
+        "expert_reply:cost_reviewer": {"summary": "high cost and weak potential"},
+    }
+    score = engine._ordering_score("finalize_recommendation", _state(discoveries))
+    assert score == engine.config.ordering_natural_reward
+
+
+def test_query_candidate_registry_not_rewarded_without_context() -> None:
+    engine = _step_reward_engine()
+    score = engine._ordering_score("query_candidate_registry", _state({}))
+    assert score == engine.config.ordering_premature_penalty
+
+
+def test_cost_reviewer_expert_management_requires_candidate_context() -> None:
+    engine = _step_reward_engine()
+    reward_without_context = engine._expert_management_score(
+        BioMedAction(
+            action_kind=ActionKind.ASK_EXPERT,
+            parameters=ExpertQueryParams(expert_id=ExpertId.COST_REVIEWER),
+        ),
+        _state({"feedstock_inspected": True, "literature_reviewed": True}),
+    )
+    reward_with_context = engine._expert_management_score(
+        BioMedAction(
+            action_kind=ActionKind.ASK_EXPERT,
+            parameters=ExpertQueryParams(expert_id=ExpertId.COST_REVIEWER),
+        ),
+        _state({"candidate_registry_queried": True}),
+    )
+    assert reward_without_context <= 0.0
+    assert reward_with_context > 0.0
+
+
+def test_finalize_too_early_penalty_not_double_counted() -> None:
+    engine = _step_reward_engine()
+    state = _state({"feedstock_inspected": True})
+    ordering = engine._ordering_score("finalize_recommendation", state)
+    special_penalty = engine._special_penalties("finalize_recommendation", state)
+    assert ordering == engine.config.ordering_finalize_too_early_penalty
+    assert special_penalty == 0.0
+
+
+def test_efficiency_zero_when_no_info_gain() -> None:
+    engine = _step_reward_engine()
+    prev_state = _state({})
+    next_state = _state({})
+    next_state.budget_spent = 1.0
+    score = engine._efficiency_score("query_literature", prev_state, next_state, info_gain_score=0.0)
+    assert score == 0.0
+
+
+def test_baseline_economic_no_go_requires_cost_reviewer_reply() -> None:
+    signals = {
+        "actions_taken": {"ask_expert", "query_candidate_registry"},
+        "candidate_strength_low": True,
+        "all_high_cost": True,
+        "economic_no_go_complete": False,
+        "cost_reviewer_reply": False,
+    }
+    context = {"candidate": True}
+    assert _has_economic_no_go_evidence(signals, context) is False
+
+    signals["cost_reviewer_reply"] = True
+    signals["economic_no_go_complete"] = True
+    assert _has_economic_no_go_evidence(signals, context) is True
+
+
+def test_characterize_first_does_not_finalize_on_structure_without_decisive_evidence() -> None:
+    policy = build_policy("characterize_first")
+    trajectory = Trajectory(
+        episode_id="ep-structural",
+        seed=7,
+        scenario_family="high_crystallinity",
+        difficulty="easy",
+        policy_name="characterize_first",
+    )
+    for kind in (
+        "inspect_feedstock",
+        "query_candidate_registry",
+        "run_hydrolysis_assay",
+        "state_hypothesis",
+    ):
+        trajectory.add_step(
+            action={"action_kind": kind, "parameters": {}},
+            observation={},
+            reward=0.0,
+            done=False,
+            reward_breakdown=_valid_reward_breakdown_dict(),
+            info={},
+            visible_state={},
+            legal_next_actions=[],
+            warnings=[],
+        )
+    observation = {
+        "artifacts": [],
+        "latest_output": {},
+        "expert_inbox": [],
+        "legal_next_actions": [
+            {"action_kind": "finalize_recommendation", "required_fields": [], "optional_fields": []},
+            {"action_kind": "query_literature", "required_fields": [], "optional_fields": []},
+        ],
+    }
+    action = policy.select_action(
+        observation=observation,
+        trajectory=trajectory,
+        rng=__import__("random").Random(0),
+    )
+    assert action.action_kind != "finalize_recommendation"
+
+
+def test_expert_usefulness_counts_recommendation_follow_even_without_sequence_follow() -> None:
+    traj = Trajectory(
+        episode_id="ep-expert-follow",
+        seed=11,
+        scenario_family="contamination_artifact",
+        difficulty="easy",
+        policy_name="expert_augmented_heuristic",
+    )
+    traj.add_step(
+        action={"action_kind": "ask_expert", "parameters": {"expert_id": "wet_lab_lead"}},
+        observation={"latest_output": {"data": {"suggested_next_action_kind": "test_cocktail"}}},
+        reward=0.0,
+        done=False,
+        reward_breakdown=_valid_reward_breakdown_dict(),
+        info={},
+        visible_state={},
+        legal_next_actions=[],
+        warnings=[],
+    )
+    traj.add_step(
+        action={
+            "action_kind": "finalize_recommendation",
+            "parameters": {
+                "bottleneck": "cocktail_synergy",
+                "recommended_family": "cocktail",
+                "decision_type": "proceed",
+                "summary": "cocktail route is most supported",
+                "evidence_artifact_ids": ["a1"],
+            },
+            "confidence": 0.7,
+        },
+        observation={},
+        reward=0.0,
+        done=True,
+        reward_breakdown=_valid_reward_breakdown_dict(),
+        info={},
+        visible_state={"spent_budget": 2.0, "budget_total": 10.0, "spent_time_days": 1.0, "time_total_days": 8.0},
+        legal_next_actions=[],
+        warnings=[],
+    )
+    dataset = TrajectoryDataset([traj])
+    dataset._benchmark_truth_sidecar = {
+        traj.episode_id: {
+            "true_bottleneck": "cocktail_synergy",
+            "best_intervention_family": "cocktail",
+        }
+    }
+    metrics = BioMedEvaluationSuite.benchmark_metrics(dataset)
+    assert metrics["expert_usefulness_score"] == pytest.approx(1.0)
+
+
+def test_info_gain_per_cost_ignores_near_zero_cost_episodes() -> None:
+    traj = Trajectory(
+        episode_id="ep-zero-cost",
+        seed=5,
+        scenario_family="high_crystallinity",
+        difficulty="easy",
+        policy_name="random_legal",
+    )
+    rb = _valid_reward_breakdown_dict()
+    rb["info_gain"] = 1.0
+    traj.add_step(
+        action={"action_kind": "query_literature", "parameters": {}},
+        observation={},
+        reward=0.0,
+        done=True,
+        reward_breakdown=rb,
+        info={},
+        visible_state={
+            "spent_budget": 0.0,
+            "budget_total": 10.0,
+            "spent_time_days": 0.0,
+            "time_total_days": 8.0,
+        },
+        legal_next_actions=[],
+        warnings=[],
+    )
+    dataset = TrajectoryDataset([traj])
+    dataset._benchmark_truth_sidecar = {
+        traj.episode_id: {
+            "true_bottleneck": "substrate_accessibility",
+            "best_intervention_family": "pretreat_then_single",
+        }
+    }
+    metrics = BioMedEvaluationSuite.benchmark_metrics(dataset)
+    assert metrics["info_gain_per_cost"] == 0.0
+
+
+def test_scenario_breakdown_requires_scenario_identity() -> None:
+    traj = Trajectory(
+        episode_id="ep-missing-scenario",
+        seed=1,
+        scenario_family=None,
+        difficulty=None,
+        policy_name="random_legal",
+    )
+    traj.add_step(
+        action={"action_kind": "inspect_feedstock", "parameters": {}},
+        observation={},
+        reward=0.0,
+        done=False,
+        reward_breakdown=_valid_reward_breakdown_dict(),
+        info={},
+        visible_state={},
+        legal_next_actions=[],
+        warnings=[],
+    )
+    dataset = TrajectoryDataset([traj])
+    with pytest.raises(ValueError, match="Scenario breakdown requires scenario_family"):
+        BioMedEvaluationSuite.scenario_breakdown(dataset)
+
+
+def test_action_diversity_not_artificially_penalized_by_missing_finalize() -> None:
+    exploratory_actions = [
+        "inspect_feedstock",
+        "query_literature",
+        "query_candidate_registry",
+        "run_hydrolysis_assay",
+        "ask_expert",
+        "state_hypothesis",
+    ]
+    base = Trajectory(
+        episode_id="ep-diversity-base",
+        seed=2,
+        scenario_family="high_crystallinity",
+        difficulty="easy",
+        policy_name="random_legal",
+    )
+    with_finalize = Trajectory(
+        episode_id="ep-diversity-final",
+        seed=3,
+        scenario_family="high_crystallinity",
+        difficulty="easy",
+        policy_name="random_legal",
+    )
+    for action_kind in exploratory_actions:
+        for traj in (base, with_finalize):
+            traj.add_step(
+                action={"action_kind": action_kind, "parameters": {}},
+                observation={},
+                reward=0.0,
+                done=False,
+                reward_breakdown=_valid_reward_breakdown_dict(),
+                info={},
+                visible_state={},
+                legal_next_actions=[],
+                warnings=[],
+            )
+    with_finalize.add_step(
+        action={
+            "action_kind": "finalize_recommendation",
+            "parameters": {
+                "bottleneck": "substrate_accessibility",
+                "recommended_family": "pretreat_then_single",
+                "decision_type": "proceed",
+                "summary": "finalize",
+                "evidence_artifact_ids": ["a1"],
+            },
+            "confidence": 0.6,
+        },
+        observation={},
+        reward=0.0,
+        done=True,
+        reward_breakdown=_valid_reward_breakdown_dict(),
+        info={},
+        visible_state={},
+        legal_next_actions=[],
+        warnings=[],
+    )
+    assert _trajectory_action_diversity(base) == pytest.approx(
+        _trajectory_action_diversity(with_finalize)
+    )

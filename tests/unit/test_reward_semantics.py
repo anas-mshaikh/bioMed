@@ -442,6 +442,7 @@ def test_no_go_cost_realism_requires_economic_justification() -> None:
         {
             "candidate_registry_queried": True,
             "expert_reply:cost_reviewer": {
+                    "expert_id": "cost_reviewer",
                 "suggested_next_action_kind": "query_candidate_registry"
             },
             "candidate_shortlist": [

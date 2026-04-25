@@ -16,6 +16,7 @@ from biomed_models import (
     normalize_structured_expert_guidance_class,
     sample_characterization_count,
 )
+from biomed_models.semantics import has_economic_no_go_evidence_from_discoveries
 from server.rules import RuleCheckResult
 from server.simulator.transition import TransitionResult
 
@@ -304,9 +305,11 @@ class StepRewardEngine:
         if action_kind == "query_candidate_registry":
             if d.get("candidate_registry_queried", False):
                 return self.config.redundancy_penalty
-            if d.get("feedstock_inspected", False) or d.get("literature_reviewed", False):
+            if sample_context and (
+                d.get("feedstock_inspected", False) or d.get("literature_reviewed", False)
+            ):
                 return self.config.ordering_natural_reward
-            return self.config.ordering_acceptable_reward
+            return self.config.ordering_premature_penalty
 
         if action_kind == "run_hydrolysis_assay":
             requested_family = str(action_params.get("candidate_family", "") or "")
@@ -388,14 +391,17 @@ class StepRewardEngine:
             return self.config.ordering_premature_penalty
 
         if action_kind == "finalize_recommendation":
+            economic_no_go_ready = has_economic_no_go_evidence_from_discoveries(raw)
             if (
                 d.get("hypothesis_stated", False)
                 and sample_context
                 and candidate_context
-                and decision_quality_evidence
+                and (decision_quality_evidence or economic_no_go_ready)
             ):
                 return self.config.ordering_natural_reward
-            if sample_context and candidate_context and decision_quality_evidence:
+            if sample_context and candidate_context and (
+                decision_quality_evidence or economic_no_go_ready
+            ):
                 return self.config.ordering_acceptable_reward
             return self.config.ordering_finalize_too_early_penalty
 
@@ -441,7 +447,7 @@ class StepRewardEngine:
         raw_eff = _clip(raw_eff, 0.0, 1.0)
 
         info_multiplier = _clip(
-            0.15 + (info_gain_score / max(self.config.info_gain_weight, 1e-6)), 0.15, 1.0
+            info_gain_score / max(self.config.info_gain_weight, 1e-6), 0.0, 1.0
         )
 
         if action_kind in {"query_literature", "query_candidate_registry"} and raw_eff > 0:
@@ -539,7 +545,7 @@ class StepRewardEngine:
             return -0.04
 
         if expert_id == "cost_reviewer":
-            if evidence_count >= 2:
+            if d.get("candidate_registry_queried", False):
                 return self.config.expert_management_weight * 0.8
             return -0.02
 
@@ -553,14 +559,6 @@ class StepRewardEngine:
         candidate_context = _has_candidate_context(d)
         decision_quality_evidence = _has_decision_quality_evidence(d)
         penalty = 0.0
-
-        if action_kind == "finalize_recommendation" and not (
-            d.get("hypothesis_stated", False)
-            and sample_context
-            and candidate_context
-            and decision_quality_evidence
-        ):
-            penalty += self.config.ordering_finalize_too_early_penalty
 
         if action_kind == "state_hypothesis" and not decision_quality_evidence:
             penalty += -0.10

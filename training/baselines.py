@@ -191,10 +191,7 @@ def _extract_signals(observation: Any, trajectory: Any) -> dict[str, Any]:
         bool(cards)
         and candidate_strength_low
         and all_high_cost
-        and (
-            _count_taken(trajectory, "query_candidate_registry") > 0
-            or cost_reviewer_reply
-        )
+        and cost_reviewer_reply
     )
 
     if contamination_signal:
@@ -224,6 +221,7 @@ def _extract_signals(observation: Any, trajectory: Any) -> dict[str, Any]:
         "artifact_suspected": artifact_suspected,
         "decisive_evidence": decisive_evidence,
         "economic_no_go_complete": economic_no_go_complete,
+        "cost_reviewer_reply": cost_reviewer_reply,
         "stability_signal_score": stability_signal_score,
         "thermostability_retention": thermostability_retention,
         "pretreatment_uplift": pretreatment_uplift,
@@ -307,10 +305,7 @@ def _has_economic_no_go_evidence(signals: dict[str, Any], context: dict[str, boo
     :func:`biomed_models.semantics.has_economic_no_go_evidence_from_signals`
     keeps baselines and the rule engine's legality check aligned.
     """
-    cost_reviewer_consulted = any(
-        str(action_kind) == "ask_expert"
-        for action_kind in signals.get("actions_taken", set())
-    ) and bool(signals.get("no_go_signal", False))
+    cost_reviewer_consulted = bool(signals.get("cost_reviewer_reply", False))
     return has_economic_no_go_evidence_from_signals(
         candidate_present=bool(context["candidate"]),
         candidate_strength_low=bool(signals.get("candidate_strength_low", False)),
@@ -355,7 +350,7 @@ def _ready_to_finalize(signals: dict[str, Any], context: dict[str, bool]) -> boo
     no supporting signal content.
     """
     decisive_evidence = int(signals.get("decisive_evidence", 0) or 0)
-    economic_no_go_ready = bool(signals.get("economic_no_go_complete", False))
+    economic_no_go_ready = _has_economic_no_go_evidence(signals, context)
     structural_ready = bool(
         context["sample"]
         and context["candidate"]
@@ -673,9 +668,7 @@ class CharacterizeFirstPolicy(BasePolicy):
         if chosen is not None:
             return _build_action(chosen, observation, trajectory)
 
-        if _ready_to_finalize(signals, context) or (
-            context["sample"] and context["candidate"] and context["high_signal"]
-        ):
+        if _ready_to_finalize(signals, context):
             if "state_hypothesis" in legal and _count_taken(trajectory, "state_hypothesis") == 0:
                 return _build_action("state_hypothesis", observation, trajectory)
             if "finalize_recommendation" in legal:

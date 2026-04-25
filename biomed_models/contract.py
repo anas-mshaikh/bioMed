@@ -135,8 +135,8 @@ class BenchmarkMetricKey(CanonicalStrEnum):
     INFO_GAIN_PER_COST = "info_gain_per_cost"
     EXPERT_USEFULNESS_SCORE = "expert_usefulness_score"
     EXPERT_USEFULNESS_KNOWN_FRACTION = "expert_usefulness_known_fraction"
-    HARD_VIOLATION_RATE = "hard_violation_rate"
-    SOFT_VIOLATION_RATE = "soft_violation_rate"
+    HARD_VIOLATION_STEP_RATE = "hard_violation_step_rate"
+    SOFT_VIOLATION_STEP_RATE = "soft_violation_step_rate"
     FINALIZATION_RATE = "finalization_rate"
 
 
