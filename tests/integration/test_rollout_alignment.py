@@ -38,6 +38,19 @@ def test_rollout_collection_keeps_truth_in_sidecar_only() -> None:
     assert dataset.benchmark_truth_sidecar()[trajectory.episode_id]["true_bottleneck"]
 
 
+def test_rollout_collection_respects_capture_latent_truth_flag() -> None:
+    dataset = collect_rollouts(
+        policy=build_policy("random_legal"),
+        episodes=1,
+        scenario_families=["high_crystallinity"],
+        difficulty="easy",
+        max_steps=3,
+        seed_start=19,
+        capture_latent_truth=False,
+    )
+    assert dataset.benchmark_truth_sidecar() == {}
+
+
 def test_baseline_policy_emits_canonical_action_objects(fresh_env) -> None:
     observation = fresh_env.reset(seed=7, scenario_family="high_crystallinity", difficulty="easy")
     trajectory = Trajectory(

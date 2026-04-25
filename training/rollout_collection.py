@@ -146,13 +146,14 @@ def collect_rollouts(
                 max_steps=max_steps,
                 capture_latent_truth=capture_latent_truth,
             )
-            truth_summary = _latent_truth_summary(env) or {}
+            if capture_latent_truth:
+                truth_summary = _latent_truth_summary(env) or {}
         finally:
             close = getattr(env, "close", None)
             if callable(close):
                 close()
         trajectory.success = classify_success(trajectory, truth_summary=truth_summary or None)
-        if truth_summary:
+        if capture_latent_truth and truth_summary:
             dataset._benchmark_truth_sidecar[trajectory.episode_id] = truth_summary
         dataset.add(trajectory)
 

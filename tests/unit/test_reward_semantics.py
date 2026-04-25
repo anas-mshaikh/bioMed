@@ -13,6 +13,7 @@ from biomed_models import (
     HydrolysisAssayParams,
     InterventionFamily,
 )
+from server.bioMed_environment import BioMedEnvironment
 from server.rewards.reward_config import RewardConfig
 from server.rewards.shaping import ProgressPotential
 from server.rewards.step_reward import StepRewardEngine
@@ -182,6 +183,92 @@ def test_finalize_from_reset_is_blocked() -> None:
 
     assert result.decision.rule_code == "FINALIZE_TOO_EARLY"
     assert result.hard_violations
+
+
+def test_legal_actions_exclude_finalize_until_hypothesis_exists() -> None:
+    latent = sample_episode_latent_state(
+        seed=17,
+        scenario_family="high_crystallinity",
+        difficulty="easy",
+    )
+    engine = RuleEngine()
+    initial_legal = engine.get_legal_next_actions(latent)
+    assert ActionKind.FINALIZE_RECOMMENDATION not in initial_legal
+
+    latent.discoveries["feedstock_inspected"] = True
+    latent.discoveries["candidate_registry_queried"] = True
+    latent.discoveries["activity_assay_run"] = True
+    pre_hypothesis_legal = engine.get_legal_next_actions(latent)
+    assert ActionKind.FINALIZE_RECOMMENDATION not in pre_hypothesis_legal
+
+    latent.discoveries["hypothesis_stated"] = True
+    post_hypothesis_legal = engine.get_legal_next_actions(latent)
+    assert ActionKind.FINALIZE_RECOMMENDATION in post_hypothesis_legal
+
+
+def test_repeated_same_expert_without_new_context_is_soft_violation() -> None:
+    env = BioMedEnvironment()
+    env.reset(seed=23, scenario_family="high_crystallinity", difficulty="easy")
+    env.step(
+        BioMedAction(
+            action_kind=ActionKind.ASK_EXPERT,
+            parameters={"expert_id": "wet_lab_lead"},
+        )
+    )
+    repeat_result = env.step(
+        BioMedAction(
+            action_kind=ActionKind.ASK_EXPERT,
+            parameters={"expert_id": "wet_lab_lead"},
+        )
+    )
+    assert "REPEATED_EXPERT_NO_NEW_CONTEXT" in (
+        repeat_result.rule_code or ""
+    ) or any("Repeated consultation with expert" in msg for msg in repeat_result.soft_violations or [])
+
+
+def test_premature_hydrolysis_assay_has_non_positive_reward() -> None:
+    env = BioMedEnvironment()
+    env.reset(seed=29, scenario_family="high_crystallinity", difficulty="easy")
+    result = env.step(
+        BioMedAction(
+            action_kind=ActionKind.RUN_HYDROLYSIS_ASSAY,
+            parameters=HydrolysisAssayParams(
+                candidate_family=InterventionFamily.PRETREAT_THEN_SINGLE,
+                pretreated=False,
+            ),
+        )
+    )
+    assert float(result.reward or 0.0) <= 0.0
+
+
+def test_finalize_requires_hypothesis_even_with_decision_evidence() -> None:
+    env = BioMedEnvironment()
+    env.reset(seed=31, scenario_family="high_crystallinity", difficulty="easy")
+    env.step(BioMedAction(action_kind=ActionKind.INSPECT_FEEDSTOCK))
+    env.step(BioMedAction(action_kind=ActionKind.QUERY_CANDIDATE_REGISTRY))
+    env.step(
+        BioMedAction(
+            action_kind=ActionKind.RUN_HYDROLYSIS_ASSAY,
+            parameters=HydrolysisAssayParams(
+                candidate_family=InterventionFamily.PRETREAT_THEN_SINGLE,
+                pretreated=False,
+            ),
+        )
+    )
+    finalize = env.step(
+        BioMedAction(
+            action_kind=ActionKind.FINALIZE_RECOMMENDATION,
+            parameters=FinalRecommendationParams(
+                bottleneck=BottleneckKind.SUBSTRATE_ACCESSIBILITY,
+                recommended_family=InterventionFamily.PRETREAT_THEN_SINGLE,
+                decision_type=DecisionType.PROCEED,
+                summary="Finalize without hypothesis",
+                evidence_artifact_ids=["artifact:1"],
+            ),
+            confidence=0.6,
+        )
+    )
+    assert finalize.rule_code == "FINALIZE_TOO_EARLY"
 
 
 def test_supported_finalization_keeps_terminal_potential_positive() -> None:

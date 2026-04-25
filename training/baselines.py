@@ -318,7 +318,7 @@ def _high_signal_priority(signals: dict[str, Any]) -> list[str]:
 
 def _ready_to_finalize(signals: dict[str, Any], context: dict[str, bool]) -> bool:
     del signals
-    return bool(context["sample"] and context["candidate"] and context["high_signal"])
+    return bool(context["sample"] and context["candidate"] and context["high_signal"] and context["hypothesis"])
 
 
 def _expert_guided_next_actions(

@@ -188,7 +188,7 @@ def structured_expert_guidance_from_observation(
 
     expert_inbox = observation.get("expert_inbox", [])
     if isinstance(expert_inbox, Sequence) and not isinstance(expert_inbox, (str, bytes, bytearray)):
-        for item in expert_inbox:
+        for item in reversed(list(expert_inbox)):
             data = None
             if hasattr(item, "model_dump"):
                 dumped = item.model_dump()

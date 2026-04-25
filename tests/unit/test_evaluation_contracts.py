@@ -85,3 +85,24 @@ def test_benchmark_metrics_require_reward_breakdown() -> None:
 
     with pytest.raises(ValueError, match="missing reward_breakdown"):
         BioMedEvaluationSuite.benchmark_metrics(dataset)
+
+
+def test_online_success_rate_uses_explicit_success_only() -> None:
+    known = _finalized_trajectory(confidence=0.7)
+    known.success = True
+    unknown = _finalized_trajectory(confidence=0.6)
+    unknown.episode_id = "episode-2"
+    unknown.success = None
+    metrics = BioMedEvaluationSuite.online_metrics([known, unknown])
+    assert metrics["success_rate"] == pytest.approx(1.0)
+
+
+def test_benchmark_metrics_reject_malformed_truth_sidecar_payload() -> None:
+    dataset = TrajectoryDataset([_finalized_trajectory(confidence=0.7)])
+    dataset._benchmark_truth_sidecar = {
+        "episode-1": {
+            "wrong_key": "value",
+        }
+    }
+    with pytest.raises(ValueError, match="Malformed private truth sidecar"):
+        BioMedEvaluationSuite.benchmark_metrics(dataset)

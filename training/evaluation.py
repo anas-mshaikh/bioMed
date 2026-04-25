@@ -10,6 +10,8 @@ from typing import Any
 from biomed_models import (
     ACTION_KIND_VALUES,
     BENCHMARK_METRIC_KEYS,
+    BOTTLENECK_KIND_VALUES,
+    INTERVENTION_FAMILY_VALUES,
     ONLINE_METRIC_KEYS,
     infer_true_bottleneck,
     infer_true_family,
@@ -69,6 +71,27 @@ def _truth_summary(
     if isinstance(truth_summary, dict) and truth_summary:
         return truth_summary
     return {}
+
+
+def _validate_truth_summary_payload(truth: dict[str, Any], *, episode_id: str) -> None:
+    required_keys = ("true_bottleneck", "best_intervention_family")
+    missing = [key for key in required_keys if key not in truth]
+    if missing:
+        raise ValueError(
+            f"Malformed private truth sidecar for episode_id={episode_id!r}: missing keys {missing}"
+        )
+    bottleneck = str(truth.get("true_bottleneck", "")).strip().lower()
+    family = str(truth.get("best_intervention_family", "")).strip().lower()
+    if bottleneck not in set(BOTTLENECK_KIND_VALUES):
+        raise ValueError(
+            f"Malformed private truth sidecar for episode_id={episode_id!r}: "
+            f"invalid true_bottleneck={bottleneck!r}"
+        )
+    if family not in set(INTERVENTION_FAMILY_VALUES):
+        raise ValueError(
+            f"Malformed private truth sidecar for episode_id={episode_id!r}: "
+            f"invalid best_intervention_family={family!r}"
+        )
 
 
 def _last_finalize_action(traj: Trajectory) -> dict[str, Any]:
@@ -311,10 +334,7 @@ class BioMedEvaluationSuite:
         metric_keys = tuple(ONLINE_METRIC_KEYS)
         returns = [t.total_reward for t in trajectories]
         lengths = [float(t.num_steps) for t in trajectories]
-        successes = [
-            1.0 if (t.success if t.success is not None else classify_success(t)) else 0.0
-            for t in trajectories
-        ]
+        successes_known = [1.0 if t.success else 0.0 for t in trajectories if t.success is not None]
 
         if not trajectories:
             return _zero_metric_map(metric_keys)
@@ -324,7 +344,7 @@ class BioMedEvaluationSuite:
             "median_return": _median(returns),
             "std_return": _std(returns),
             "mean_episode_length": _mean(lengths),
-            "success_rate": _mean(successes),
+            "success_rate": _mean(successes_known),
         }
         _validate_metric_schema(metrics, metric_keys, label="online")
         return metrics
@@ -360,6 +380,7 @@ class BioMedEvaluationSuite:
                 raise ValueError(
                     f"Missing private truth sidecar for episode_id={traj.episode_id!r}; benchmark metrics are not trustworthy."
                 )
+            _validate_truth_summary_payload(truth, episode_id=traj.episode_id)
             finalize_params = _finalize_parameters(traj, strict=True)
             hard_episode_count = 0
             info_gain_total = 0.0

@@ -6,6 +6,7 @@ import pytest
 
 from training.parsing import parse_tool_call
 from training.trainer_script import build_prompt
+from biomed_models.semantics import structured_expert_guidance_from_observation
 
 
 pytestmark = pytest.mark.unit
@@ -62,3 +63,14 @@ def test_no_duplicate_route_family_constants_outside_canonical_layer() -> None:
             continue
         text = path.read_text(encoding="utf-8")
         assert "ASSAY_ROUTE_FAMILIES =" not in text, f"duplicate route family set in {path}"
+
+
+def test_structured_expert_guidance_prefers_latest_reply() -> None:
+    observation = {
+        "expert_inbox": [
+            {"data": {"guidance_class": "thermostable_single"}},
+            {"data": {"guidance_class": "cocktail"}},
+        ]
+    }
+    guidance = structured_expert_guidance_from_observation(observation)
+    assert guidance == "cocktail"

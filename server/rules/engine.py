@@ -41,7 +41,6 @@ class RuleEngine:
             ActionKind.QUERY_CANDIDATE_REGISTRY,
             ActionKind.ASK_EXPERT,
             ActionKind.STATE_HYPOTHESIS,
-            ActionKind.FINALIZE_RECOMMENDATION,
         ]
 
         if d.get("feedstock_inspected", False):
@@ -74,6 +73,18 @@ class RuleEngine:
 
         if d.get("candidate_registry_queried", False) and d.get("activity_assay_run", False):
             legal.append(ActionKind.TEST_COCKTAIL)
+        if (
+            d.get("feedstock_inspected", False)
+            and d.get("candidate_registry_queried", False)
+            and (
+                d.get("activity_assay_run", False)
+                or d.get("thermostability_assay_run", False)
+                or d.get("pretreatment_tested", False)
+                or d.get("cocktail_tested", False)
+            )
+            and d.get("hypothesis_stated", False)
+        ):
+            legal.append(ActionKind.FINALIZE_RECOMMENDATION)
 
         seen: set[ActionKind] = set()
         ordered: list[ActionKind] = []
@@ -313,6 +324,8 @@ class RuleEngine:
                 or d.get("cocktail_tested", False)
             ):
                 missing.append("decision_quality_evidence")
+            if not d.get("hypothesis_stated", False):
+                missing.append("hypothesis_stated")
             if missing:
                 return hard(
                     "FINALIZE_TOO_EARLY",
@@ -355,8 +368,14 @@ class RuleEngine:
                 )
             last = recent[-1]
             last_expert_id = getattr(last, "expert_id", None)
+            if last_expert_id is None and hasattr(last, "metadata"):
+                metadata = getattr(last, "metadata", None)
+                if isinstance(metadata, dict):
+                    last_expert_id = metadata.get("expert_id")
             if last_expert_id is None and isinstance(last, dict):
                 last_expert_id = last.get("expert_id")
+                if last_expert_id is None and isinstance(last.get("metadata"), dict):
+                    last_expert_id = last["metadata"].get("expert_id")
             current_expert_id = (
                 action.parameters.expert_id if isinstance(action.parameters, ExpertQueryParams) else None
             )

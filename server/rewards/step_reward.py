@@ -205,12 +205,28 @@ class StepRewardEngine:
         rb.efficiency = self._efficiency_score(action_kind, prev_state, next_state, rb.info_gain)
         rb.novelty = self._novelty_score(action_kind, prev_state)
         rb.expert_management = self._expert_management_score(action, prev_state)
+        context_gate_penalty = 0.0
+        if action_kind == "run_hydrolysis_assay":
+            sample_context = _has_sample_context(_discoveries(prev_state))
+            candidate_context = _has_candidate_context(_discoveries(prev_state))
+            if not (sample_context and candidate_context):
+                # Prevent reward farming on expensive assays without core context.
+                rb.validity = 0.0
+                rb.info_gain = 0.0
+                rb.novelty = 0.0
+                context_gate_penalty = -0.25
+                rb.components["context_gated"] = 1.0
 
         soft_penalty = self.config.soft_violation_penalty_per_item * len(
             rule_result.soft_violations
         )
         redundancy_penalty = self._redundancy_penalty(action, prev_state)
-        rb.penalty = soft_penalty + redundancy_penalty + self._special_penalties(action, prev_state)
+        rb.penalty = (
+            soft_penalty
+            + redundancy_penalty
+            + self._special_penalties(action, prev_state)
+            + context_gate_penalty
+        )
 
         phi_prev = self.potential.potential(prev_state)
         phi_next = self.potential.potential(next_state)
@@ -223,7 +239,6 @@ class StepRewardEngine:
         rb.components["phi_next"] = phi_next
         rb.components["output_quality"] = float(getattr(output, "quality_score", 0.0) or 0.0)
         rb.components["output_uncertainty"] = float(getattr(output, "uncertainty", 1.0) or 1.0)
-
         return rb
 
     def invalid_action_penalty(self, rule_result: RuleCheckResult) -> RewardBreakdown:
