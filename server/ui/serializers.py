@@ -140,7 +140,7 @@ def ui_debug_enabled() -> bool:
 
 
 def redact_hidden_debug() -> str:
-    return "Hidden truth is off in normal mode."
+    return "Hidden truth is disabled in normal mode."
 
 
 def _walk_payload(payload: Any, *, path: str = "payload") -> Iterable[tuple[str, Any]]:
@@ -213,7 +213,10 @@ def station_map() -> list[dict[str, str]]:
 
 
 def scenario_cards() -> list[dict[str, Any]]:
-    return [dict(card) for card in _SCENARIO_CARD_DEFS if card.get("available", True)]
+    # Keep both currently available and "coming soon" cards in the payload.
+    # The UI disables unavailable options client-side, and tests assert that
+    # future entries remain visible instead of being silently filtered out.
+    return [dict(card) for card in _SCENARIO_CARD_DEFS]
 
 
 def reward_display_label(key: str) -> str:

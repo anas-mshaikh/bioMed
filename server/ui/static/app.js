@@ -39,21 +39,25 @@ function formatNumber(value) {
   return n.toFixed(4);
 }
 
+function availableScenarioCards(cards) {
+  return (cards || []).filter((card) => card && card.available !== false);
+}
+
 function renderScenarioSelect(cards) {
   const select = el("scenario-select");
   const preferred = selectedScenarioFamily || select.value || null;
+  const visibleCards = availableScenarioCards(cards);
   select.innerHTML = "";
-  cards.forEach((card) => {
+  visibleCards.forEach((card) => {
     const option = document.createElement("option");
     option.value = card.scenario_family;
     option.textContent = card.title || card.scenario_family;
-    option.disabled = card.available === false;
     select.appendChild(option);
   });
-  if (preferred && cards.some((card) => card.scenario_family === preferred)) {
+  if (preferred && visibleCards.some((card) => card.scenario_family === preferred)) {
     select.value = preferred;
-  } else if (cards.length) {
-    select.value = cards.find((card) => card.available !== false)?.scenario_family || cards[0].scenario_family;
+  } else if (visibleCards.length) {
+    select.value = visibleCards[0].scenario_family;
   }
   selectedScenarioFamily = select.value || null;
 }
@@ -61,13 +65,13 @@ function renderScenarioSelect(cards) {
 function renderScenarioCards(cards) {
   const root = el("scenario-cards");
   root.innerHTML = "";
-  cards.forEach((card) => {
+  availableScenarioCards(cards).forEach((card) => {
     const node = document.createElement("article");
-    node.className = `card ${card.available ? "available" : "unavailable"}`;
+    node.className = "card available";
     node.innerHTML = `
       <div class="card-title">
         <strong>${escapeHtml(card.title)}</strong>
-        <span class="pill">${card.available ? "ready" : "off"}</span>
+        <span class="pill">ready</span>
       </div>
       <div class="muted">${escapeHtml(card.subtitle || "")}</div>
       <p>${escapeHtml(card.description || "")}</p>
