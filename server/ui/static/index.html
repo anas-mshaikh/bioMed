@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>BioMed Judge Cockpit</title>
+    <link rel="stylesheet" href="/ui/static/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">BioMed Judge Cockpit</div>
+          <h1>PET Bioremediation Replay Console</h1>
+        </div>
+        <div class="controls">
+          <label>Seed <input id="seed-input" type="number" value="7" /></label>
+          <label
+            >Scenario
+            <select id="scenario-select"></select>
+          </label>
+          <label
+            >Difficulty
+            <select id="difficulty-select">
+              <option value="easy">easy</option>
+              <option value="medium">medium</option>
+              <option value="hard">hard</option>
+            </select>
+          </label>
+          <button id="reset-btn">Reset</button>
+          <button id="run-demo-btn">Run Demo</button>
+          <button id="step-btn">Step</button>
+          <button id="judge-btn">Judge Mode</button>
+          <button id="export-json-btn">Export JSON</button>
+          <button id="export-md-btn">Export Markdown</button>
+        </div>
+      </header>
+
+      <section id="banner" class="banner hidden"></section>
+
+      <main class="grid">
+        <aside class="panel">
+          <h2>Episode</h2>
+          <div id="episode-summary" class="stack"></div>
+
+          <h2>Scenario Cards</h2>
+          <div id="scenario-cards" class="cards"></div>
+
+          <h2>Pipeline</h2>
+          <div id="pipeline" class="pipeline"></div>
+        </aside>
+
+        <section class="panel main">
+          <div class="section-header">
+            <h2>Workflow Stations</h2>
+            <div id="status-pill" class="pill">Idle</div>
+          </div>
+          <div id="stations" class="stations"></div>
+
+          <h2>Action Builder</h2>
+          <div class="builder">
+            <label>
+              Legal action
+              <select id="action-select"></select>
+            </label>
+            <div id="action-form" class="action-form"></div>
+          </div>
+
+          <h2>Timeline</h2>
+          <div id="timeline" class="timeline"></div>
+        </section>
+
+        <aside class="panel">
+          <h2>Reward</h2>
+          <div class="metric-row">
+            <div>
+              <div class="metric-label">Step</div>
+              <div id="step-reward" class="metric-value mono">—</div>
+            </div>
+            <div>
+              <div class="metric-label">Cumulative</div>
+              <div id="cum-reward" class="metric-value mono">—</div>
+            </div>
+          </div>
+          <div id="reward-breakdown" class="bars"></div>
+
+          <h2>Latest Output</h2>
+          <div id="latest-output" class="stack"></div>
+
+          <h2>Signals</h2>
+          <div id="signal-block" class="stack"></div>
+
+          <h2>Judge Mode</h2>
+          <pre id="judge-panel" class="judge-panel">
+Hidden truth is disabled in normal demo mode to preserve the POMDP boundary.</pre
+          >
+        </aside>
+      </main>
+    </div>
+
+    <template id="timeline-item-template">
+      <article class="timeline-item">
+        <div class="timeline-item-head">
+          <strong class="timeline-title"></strong>
+          <span class="timeline-meta"></span>
+        </div>
+        <div class="timeline-body"></div>
+      </article>
+    </template>
+
+    <script src="/ui/static/app.js"></script>
+  </body>
+</html>

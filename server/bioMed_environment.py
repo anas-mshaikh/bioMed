@@ -246,6 +246,15 @@ class BioMedEnvironment:
             "best_intervention_family": infer_true_family(best_family).value,
         }
 
+    def demo_metadata(self) -> dict[str, Any]:
+        latent = self._require_latent()
+        return {
+            "episode_id": latent.episode_id,
+            "seed": latent.seed,
+            "scenario_family": latent.scenario_family,
+            "difficulty": latent.difficulty,
+        }
+
     # -----------------------------
     # Async wrappers
     # Keep these thin and shape-consistent.

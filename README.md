@@ -29,7 +29,7 @@ The hidden truth includes scenario family, intervention-family viability, bottle
 
 ### Scenario families
 
-Current scenario families are generated in [server/tasks/scenarios.py](server/tasks/scenarios.py):
+Current scenario families are generated in [server/simulator/scenarios.py](server/simulator/scenarios.py):
 
 - `high_crystallinity`
 - `contamination_artifact`
@@ -40,7 +40,7 @@ Current scenario families are generated in [server/tasks/scenarios.py](server/ta
 
 ### Action surface
 
-The public action model is [models.py](models.py) `::BioMedAction`. Key action kinds include:
+The public action model is [biomed_models/contract.py](biomed_models/contract.py) `::BioMedAction`. Key action kinds include:
 
 - intake and triage: `inspect_feedstock`, `query_literature`, `query_candidate_registry`
 - evidence gathering: `measure_crystallinity`, `measure_contamination`, `estimate_particle_size`, `estimate_stability_signal`
@@ -51,8 +51,8 @@ The public action model is [models.py](models.py) `::BioMedAction`. Key action k
 
 ### Observation and state
 
-- [models.py](models.py) `::BioMedObservation` is the visible agent observation returned from `reset()` and `step()`.
-- [models.py](models.py) `::BioMedVisibleState` is the visible state returned by `state()`.
+- [biomed_models/observation.py](biomed_models/observation.py) `::BioMedObservation` is the visible agent observation returned from `reset()` and `step()`.
+- [biomed_models/state.py](biomed_models/state.py) `::BioMedVisibleState` is the visible state returned by `state()`.
 - Hidden latent truth is not part of the public environment contract.
 
 ## Quick start
@@ -91,6 +91,28 @@ Validate the manifest and server wiring:
 ```bash
 ./.venv/bin/openenv validate
 ```
+
+## BioMed Judge Cockpit
+
+Start the server:
+
+```bash
+uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Open:
+
+```text
+http://localhost:8000/ui
+```
+
+Enable judge debug mode:
+
+```bash
+BIOMED_UI_DEBUG=true uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
+```
+
+The cockpit is a benchmark/demo visualization layer, not a wet-lab platform. Normal mode is truth-redacted. Judge mode only works when the server debug flag is enabled. Public exports are visible replay exports by default.
 
 ### Typed client
 
@@ -194,13 +216,10 @@ The Docker Space exposes:
 
 ```text
 bioMed/
-├── bioMed/                  # Canonical public Python package
-├── common/                  # Shared benchmark semantics
+├── biomed_models/           # Canonical public contract/model layer
 ├── server/                  # Environment server, simulator, rules, rewards
 ├── training/                # Rollouts, replay, evaluation, baselines
 ├── tests/                   # Unit, integration, API, and e2e coverage
-├── client.py                # Typed OpenEnv client implementation
-├── models.py                # Public action / observation / state models
 ├── openenv.yaml             # OpenEnv manifest
 └── pyproject.toml           # Packaging and dev tooling
 ```
