@@ -594,48 +594,21 @@ def build_action_prompt(observation_text: str) -> list[dict[str, str]]:
         {
             "role": "user",
             "content": (
-                "You are training inside BioMed, a PET bioremediation planning benchmark.\n\n"
-                "Choose exactly one next action as valid JSON. Do not explain outside JSON.\n\n"
-                "Allowed action_kind values:\n"
-                "- inspect_feedstock\n"
-                "- query_literature\n"
-                "- query_candidate_registry\n"
-                "- run_hydrolysis_assay\n"
-                "- ask_expert\n"
-                "- state_hypothesis\n"
-                "- finalize_recommendation\n\n"
-                "Allowed intervention families:\n"
-                "- pretreat_then_single\n"
-                "- thermostable_single\n"
-                "- cocktail\n"
-                "- no_go\n\n"
-                "Allowed bottlenecks:\n"
-                "- substrate_accessibility\n"
-                "- thermostability\n"
-                "- contamination_artifact\n"
-                "- candidate_mismatch\n"
-                "- cocktail_synergy\n"
-                "- pilot_scale_risk\n"
-                "- no_viable_path\n\n"
-                "Allowed decision_type values:\n"
-                "- continue\n"
-                "- pivot\n"
-                "- no_go\n\n"
-                "JSON schemas by action:\n"
-                '{"action_kind":"inspect_feedstock","rationale":"...","confidence":0.5}\n'
-                '{"action_kind":"query_literature","query_focus":"...","rationale":"...","confidence":0.5}\n'
-                '{"action_kind":"query_candidate_registry","family_hint":null,"rationale":"...","confidence":0.5}\n'
-                '{"action_kind":"run_hydrolysis_assay","candidate_family":"pretreat_then_single","pretreated":true,"rationale":"...","confidence":0.5}\n'
-                '{"action_kind":"ask_expert","expert_id":"wet_lab_lead","question":"...","rationale":"...","confidence":0.5}\n'
-                '{"action_kind":"state_hypothesis","hypothesis":"...","rationale":"...","confidence":0.5}\n'
-                '{"action_kind":"finalize_recommendation","bottleneck":"substrate_accessibility","recommended_family":"pretreat_then_single","decision_type":"continue","summary":"...","evidence_artifact_ids":[],"rationale":"...","confidence":0.5}\n\n'
-                "Current BioMed observation:\n"
-                f"{observation_text}\n\n"
-                "Return only one JSON object."
+                "/no_think\n\n"
+                "You are choosing the next BioMed action.\n\n"
+                "Return only one JSON object.\n"
+                "Do not include <think> tags.\n"
+                "Do not explain outside JSON.\n"
+                "Your output must start with { and end with }.\n\n"
+                "Important:\n"
+                "- Return the NEXT ACTION, not the current observation.\n"
+                "- Do not repeat actions listed in avoid_repeating.\n"
+                "- Prefer cheap evidence actions before expensive assays.\n"
+                "- If inspection already happened, do not choose inspect_feedstock again.\n\n"
+                ...
             ),
         }
     ]
-
 
 def require_unsloth() -> tuple[Any, Any]:
     try:
