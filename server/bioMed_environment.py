@@ -179,14 +179,15 @@ class BioMedEnvironment:
             rule_result=rule_result,
         )
 
-        if (
-            self._latent.done
-            and self._latent.done_reason == "final_decision_submitted"
-            and action.action_kind == ActionKind.FINALIZE_RECOMMENDATION
-        ):
+        if self._latent.done:
+            recommendation = (
+                self._extract_recommendation(action)
+                if action.action_kind == ActionKind.FINALIZE_RECOMMENDATION
+                else {}
+            )
             terminal_breakdown = self.reward_computer.terminal_reward(
                 state=self._latent,
-                recommendation=self._extract_recommendation(action),
+                recommendation=recommendation,
             )
             reward_breakdown.merge(terminal_breakdown)
 

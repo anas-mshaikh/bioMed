@@ -279,41 +279,6 @@ class BioMedTransitionEngine:
             time_delta_days=time_delta_days,
         )
 
-        if s.resources.budget_remaining <= 0 or s.resources.time_remaining_days <= 0:
-            s.mark_done("resources_exhausted")
-            failure_effect = TransitionEffect(
-                effect_type="failure",
-                summary="Resources exhausted before the action could complete cleanly.",
-                success=False,
-                quality_score=0.0,
-                warnings=list(soft_v),
-                data={
-                    "action_kind": action.action_kind,
-                    "resource_failure": True,
-                },
-                budget_delta=budget_delta,
-                time_delta_days=time_delta_days,
-            )
-            s.append_history(
-                action_kind=action.action_kind,
-                summary="Resources exhausted.",
-                budget_delta=budget_delta,
-                time_delta_days=time_delta_days,
-                metadata={
-                    "resource_failure": True,
-                    "budget_remaining": s.resources.budget_remaining,
-                    "time_remaining_days": s.resources.time_remaining_days,
-                },
-            )
-            return TransitionResult(
-                next_state=s,
-                effect=failure_effect,
-                hard_violations=["resources_exhausted"],
-                soft_violations=soft_v,
-                done=True,
-                internal_flags={"resources_exhausted": True},
-            )
-
         handler = self._resolve_handler(action.action_kind)
         effect = handler(
             s,
@@ -327,6 +292,9 @@ class BioMedTransitionEngine:
 
         if action.action_kind == "finalize_recommendation" and not s.done:
             s.mark_done("final_decision_submitted")
+
+        if not s.done and (s.resources.budget_remaining <= 0 or s.resources.time_remaining_days <= 0):
+            s.mark_done("resources_exhausted")
 
         if s.should_force_terminal() and not s.done:
             if s.resources.budget_remaining <= 0 or s.resources.time_remaining_days <= 0:
@@ -995,7 +963,6 @@ class BioMedTransitionEngine:
         uplift = round(_clamp(0.12 + (0.28 * sensitivity) + s.uniform(-0.05, 0.05), 0.0, 0.95), 4)
         assay_data = {
             "pretreatment_uplift": uplift,
-            "pretreatment_sensitivity_band": s.substrate_truth.pretreatment_sensitivity,
             "interpretation": "worth pursuing" if uplift >= 0.25 else "limited benefit",
         }
         s.progress.record_discovery("pretreatment_tested", True)

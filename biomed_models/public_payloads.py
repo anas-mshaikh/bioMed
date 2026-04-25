@@ -86,7 +86,6 @@ class AssayOutputData(StrictModel):
     stability_signal_band: str | None = None
     screening_context: str | None = None
     pretreatment_uplift: float | None = None
-    pretreatment_sensitivity_band: str | None = None
     synergy_score: float | None = None
 
     @model_validator(mode="after")
@@ -106,7 +105,6 @@ class AssayOutputData(StrictModel):
                 self.stability_signal_band,
                 self.screening_context,
                 self.pretreatment_uplift,
-                self.pretreatment_sensitivity_band,
                 self.synergy_score,
             )
         ):

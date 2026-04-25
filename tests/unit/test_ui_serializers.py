@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
+from biomed_models import OutputType
+from biomed_models.public_payloads import to_public_output_data
+from server.ui.recorder import (
+    UIEpisodeReplay,
+    UIEpisodeSummary,
+    UIStepSnapshot,
+    build_debug_snapshot,
+)
 from server.ui.serializers import (
     assert_no_hidden_keys,
     normalize_reward_breakdown,
@@ -68,3 +78,58 @@ def test_assert_no_hidden_keys_recursively_rejects_hidden_truth() -> None:
     with pytest.raises(AssertionError):
         assert_no_hidden_keys(payload)
 
+
+def test_pretreatment_public_payload_forbids_hidden_sensitivity() -> None:
+    with pytest.raises(Exception):
+        to_public_output_data(
+            OutputType.ASSAY,
+            {
+                "candidate_family": "pretreat_then_single",
+                "pretreatment_sensitivity_band": "high",
+                "observed_conversion_fraction": 0.7,
+            },
+        )
+
+
+def test_debug_summary_reports_remaining_not_spent_resources() -> None:
+    environment = SimpleNamespace(
+        state={
+            "episode_id": "episode-1",
+            "stage": "assay",
+            "step_count": 2,
+            "budget_total": 10.0,
+            "spent_budget": 3.5,
+            "time_total_days": 8,
+            "spent_time_days": 2,
+        }
+    )
+    replay = UIEpisodeReplay(
+        episode=UIEpisodeSummary(
+            episode_id="episode-1",
+            session_id="session-1",
+            started_at_utc="2026-01-01T00:00:00+00:00",
+            last_updated_utc="2026-01-01T00:00:00+00:00",
+        ),
+        steps=[
+            UIStepSnapshot(
+                episode_id="episode-1",
+                step_index=2,
+                timestamp_utc="2026-01-01T00:00:00+00:00",
+                stage="assay",
+                observation={},
+                visible_state={},
+                done=True,
+                done_reason="resources_exhausted",
+            )
+        ],
+    )
+
+    debug = build_debug_snapshot(
+        episode_id="episode-1",
+        environment=environment,
+        replay=replay,
+        hidden_truth_summary={},
+    )
+
+    assert debug.latent_debug_summary["budget_remaining"] == pytest.approx(6.5)
+    assert debug.latent_debug_summary["time_remaining_days"] == 6

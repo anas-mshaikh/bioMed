@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextvars import ContextVar
+import logging
 import secrets
 import threading
 import time
@@ -31,6 +32,7 @@ HTTP_SESSION_MAX_ENVS = 24
 _current_http_session_id: ContextVar[str | None] = ContextVar(
     "biomed_http_session_id", default=None
 )
+_LOGGER = logging.getLogger(__name__)
 
 
 class _StoredHTTPEnvironment:
@@ -190,6 +192,11 @@ def _record_step_snapshot(
     ui_episode_store.append_step(session_id, snapshot.episode_id, snapshot.model_dump(mode="json"))
 
 
+def _record_ui_failure(session_id: str, message: str) -> None:
+    _LOGGER.exception("%s [session=%s]", message, session_id)
+    ui_episode_store.record_warning(session_id, message)
+
+
 class ResetRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -254,8 +261,8 @@ async def reset_environment(http_request: Request, request: ResetRequest) -> Ste
             observation=observation,
             reset_payload=request.model_dump(mode="json"),
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        _record_ui_failure(_request_session_id(http_request), f"UI reset recording failed: {exc}")
     return StepResponse(observation=observation, reward=None, done=bool(observation.done))
 
 
@@ -270,8 +277,8 @@ async def step_environment(http_request: Request, action: BioMedAction) -> StepR
     result = env.step(action)
     try:
         _record_step_snapshot(request=http_request, env=env, action=action, result=result)
-    except Exception:
-        pass
+    except Exception as exc:
+        _record_ui_failure(_request_session_id(http_request), f"UI step recording failed: {exc}")
     return StepResponse(
         observation=result.observation,
         reward=result.reward,

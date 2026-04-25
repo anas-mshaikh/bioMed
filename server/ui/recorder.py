@@ -122,6 +122,8 @@ class UILiveState(StrictModel):
     reward_labels: dict[str, str] = Field(default_factory=dict)
     debug_enabled: bool = False
     banner: str | None = None
+    ui_warnings: list[str] = Field(default_factory=list)
+    last_recorder_error: str | None = None
     schema_version: Literal["biomed_v2"] = SCHEMA_VERSION
 
 
@@ -142,6 +144,7 @@ class UIRunBaselineRequest(StrictModel):
     seed: int | None = None
     scenario_family: ScenarioFamily | None = None
     difficulty: Difficulty | None = None
+    continue_current: bool = False
 
 
 def _model_dump(value: Any) -> Any:
@@ -405,13 +408,26 @@ def build_debug_snapshot(
     hidden_truth_summary: Mapping[str, Any] | None = None,
 ) -> UIDebugSnapshot:
     visible_state = _visible_state_from_env(environment)
+    episode_done_reason = None
+    if replay is not None:
+        episode_done_reason = replay.episode.done_reason
+        if episode_done_reason is None and replay.steps:
+            episode_done_reason = replay.steps[-1].done_reason
     latent_debug = {
         "episode_id": episode_id,
         "current_stage": visible_state.get("stage"),
         "step_count": visible_state.get("step_count"),
-        "budget_remaining": visible_state.get("spent_budget"),
-        "time_remaining_days": visible_state.get("spent_time_days"),
-        "done_reason": visible_state.get("done_reason"),
+        "budget_remaining": max(
+            0.0,
+            float(visible_state.get("budget_total", 0.0) or 0.0)
+            - float(visible_state.get("spent_budget", 0.0) or 0.0),
+        ),
+        "time_remaining_days": max(
+            0,
+            int(visible_state.get("time_total_days", 0) or 0)
+            - int(visible_state.get("spent_time_days", 0) or 0),
+        ),
+        "done_reason": episode_done_reason,
     }
     comparison: dict[str, Any] = {}
     terminal_breakdown: dict[str, Any] = {}
@@ -538,6 +554,12 @@ def build_live_state(
         ]},
         debug_enabled=debug_enabled,
         banner=None,
+        ui_warnings=list(store_state.get("ui_warnings", [])) if isinstance(store_state, Mapping) else [],
+        last_recorder_error=(
+            str(store_state.get("last_recorder_error"))
+            if isinstance(store_state, Mapping) and store_state.get("last_recorder_error")
+            else None
+        ),
     )
 
 

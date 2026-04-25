@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
 from biomed_models import (
     ACTION_COSTS,
@@ -10,6 +11,7 @@ from biomed_models import (
     ExpertId,
     ExpertQueryParams,
     HydrolysisAssayParams,
+    SAMPLE_CHARACTERIZATION_KEYS,
     milestone_count,
 )
 from biomed_models.semantics import has_economic_no_go_evidence_from_discoveries
@@ -31,6 +33,15 @@ class RuleEngine:
     _KNOWN_ACTIONS = frozenset(ActionKind)
 
     _KNOWN_EXPERTS = frozenset(ExpertId)
+
+    @staticmethod
+    def _has_hydrolysis_context(discoveries: dict[str, Any]) -> bool:
+        sample_context = any(discoveries.get(key, False) for key in SAMPLE_CHARACTERIZATION_KEYS)
+        candidate_context = bool(
+            discoveries.get("candidate_registry_queried", False)
+            or discoveries.get("stability_signal_estimated", False)
+        )
+        return bool(sample_context and candidate_context)
 
     def get_legal_next_actions(self, latent: LatentEpisodeState) -> list[ActionKind]:
         if latent.done:
@@ -62,7 +73,7 @@ class RuleEngine:
                 ]
             )
 
-        if d.get("feedstock_inspected", False) or d.get("candidate_registry_queried", False):
+        if self._has_hydrolysis_context(d):
             legal.append(ActionKind.RUN_HYDROLYSIS_ASSAY)
 
         if d.get("activity_assay_run", False):
@@ -299,15 +310,20 @@ class RuleEngine:
             ), soft
 
         if a == ActionKind.RUN_HYDROLYSIS_ASSAY:
+            missing: list[str] = []
+            if not any(d.get(key, False) for key in SAMPLE_CHARACTERIZATION_KEYS):
+                missing.append("sample_characterization")
             if not (
-                d.get("feedstock_inspected", False) or d.get("candidate_registry_queried", False)
+                d.get("candidate_registry_queried", False)
+                or d.get("stability_signal_estimated", False)
             ):
-                soft.append(
-                    warning(
-                        "ASSAY_TOO_EARLY",
-                        "Hydrolysis assay is being run before basic sample or candidate context is established.",
-                    )
-                )
+                missing.append("candidate_context")
+            if missing:
+                return hard(
+                    "ASSAY_TOO_EARLY",
+                    "Cannot run hydrolysis assay before sample characterization and candidate context exist.",
+                    missing,
+                ), soft
 
         if a == ActionKind.FINALIZE_RECOMMENDATION:
             missing = self._missing_finalize_prerequisites(latent)

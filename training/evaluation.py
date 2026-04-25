@@ -21,6 +21,7 @@ from biomed_models import (
     recommendation_has_explicit_go_semantics,
     recommendation_has_explicit_stop_semantics,
     structured_expert_guidance_from_observation,
+    validate_reward_breakdown,
 )
 from .trajectory import Trajectory, TrajectoryDataset
 from biomed_models.semantics import (
@@ -194,11 +195,20 @@ def _trajectory_action_diversity(traj: Trajectory) -> float:
 def _reward_component_mean(traj: Trajectory, name: str) -> float:
     values = []
     for step in traj.steps:
-        value = step.reward_breakdown.get(name, 0.0)
+        breakdown = validate_reward_breakdown(
+            step.reward_breakdown, field_name=f"step[{step.step_index}].reward_breakdown"
+        )
+        if name not in breakdown:
+            raise ValueError(
+                f"Step {step.step_index} is missing required reward component {name!r}."
+            )
+        value = breakdown[name]
         try:
             values.append(float(value))
         except (TypeError, ValueError):
-            continue
+            raise ValueError(
+                f"Step {step.step_index} reward component {name!r} must be numeric."
+            ) from None
     return _mean(values)
 
 
@@ -391,11 +401,6 @@ class BioMedEvaluationSuite:
         if not trajectories:
             return _zero_metric_map(metric_keys)
 
-        if any(not step.reward_breakdown for traj in trajectories for step in traj.steps):
-            raise ValueError(
-                "A trajectory step is missing reward_breakdown; benchmark metrics are not trustworthy."
-            )
-
         workflow_validity_hard_episodes = []
         workflow_validity_soft_episodes = []
         ordering_scores = []
@@ -438,6 +443,10 @@ class BioMedEvaluationSuite:
 
             for idx, step in enumerate(traj.steps):
                 total_steps += 1
+                breakdown = validate_reward_breakdown(
+                    step.reward_breakdown,
+                    field_name=f"episode[{traj.episode_id}].step[{step.step_index}].reward_breakdown",
+                )
                 hard_count = _step_hard_violation_count(step)
                 soft_count = _step_soft_violation_count(step)
                 hard_violation_steps += hard_count
@@ -447,7 +456,7 @@ class BioMedEvaluationSuite:
                 if soft_count > 0:
                     soft_episode_count += soft_count
 
-                info_gain_total += float(step.reward_breakdown.get("info_gain", 0.0) or 0.0)
+                info_gain_total += float(breakdown["info_gain"] or 0.0)
 
                 if str(step.action.get("action_kind", "")) == "ask_expert":
                     hint = _extract_expert_hint(step)
@@ -455,12 +464,6 @@ class BioMedEvaluationSuite:
                         continue
                     expert_uses += 1
                     followed = _expert_hint_was_followed(traj, idx, hint)
-                    if not followed and has_finalization:
-                        followed = recommendation_follows_expert_guidance(
-                            guidance=hint,
-                            recommended_family=finalize_params.get("recommended_family"),
-                            decision_type=finalize_params.get("decision_type"),
-                        )
                     if followed:
                         expert_useful += 1
 

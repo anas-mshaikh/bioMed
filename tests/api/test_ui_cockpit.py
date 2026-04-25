@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+import server.app as app_module
+
 from server.ui.serializers import assert_no_hidden_keys
 
 
@@ -73,6 +75,28 @@ def test_ui_snapshot_has_required_fields(client, reset_session) -> None:
     assert_no_hidden_keys(snapshot["visible_state"])
 
 
+def test_ui_state_exposes_recorder_failure_diagnostics(client, reset_session, monkeypatch) -> None:
+    def boom(*_args, **_kwargs) -> None:
+        raise RuntimeError("recorder boom")
+
+    monkeypatch.setattr(app_module, "_record_reset_snapshot", boom)
+
+    response = client.post(
+        "/reset",
+        json={
+            "seed": 7,
+            "scenario_family": "high_crystallinity",
+            "difficulty": "easy",
+        },
+        headers=reset_session,
+    )
+    assert response.status_code == 200
+
+    state = client.get("/ui/state", headers=reset_session).json()
+    assert state["ui_warnings"]
+    assert state["last_recorder_error"]
+
+
 def test_replay_export_json(client, reset_session) -> None:
     state = client.get("/ui/state", headers=reset_session).json()
     episode_id = state["current_episode_id"]
@@ -114,3 +138,40 @@ def test_ui_does_not_mutate_environment_on_read(client, reset_session) -> None:
     assert after.status_code == 200
     assert before.json() == after.json()
 
+
+def test_ui_run_baseline_respects_requested_scenario(client, reset_session) -> None:
+    response = client.post(
+        "/ui/demo/run-baseline",
+        json={
+            "policy_name": "characterize_first",
+            "max_steps": 2,
+            "seed": 11,
+            "scenario_family": "thermostability_bottleneck",
+            "difficulty": "easy",
+        },
+        headers=reset_session,
+    )
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["episode"]["seed"] == 11
+    assert payload["episode"]["scenario_family"] == "thermostability_bottleneck"
+
+
+def test_ui_run_baseline_continue_current_requires_explicit_flag(client, reset_session) -> None:
+    state = client.get("/ui/state", headers=reset_session).json()
+    current_episode_id = state["current_episode_id"]
+
+    response = client.post(
+        "/ui/demo/run-baseline",
+        json={
+            "policy_name": "characterize_first",
+            "max_steps": 1,
+            "continue_current": True,
+        },
+        headers=reset_session,
+    )
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["episode"]["episode_id"] == current_episode_id

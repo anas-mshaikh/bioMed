@@ -14,16 +14,8 @@ from biomed_models import (
     RewardKey,
     SCENARIO_FAMILY_VALUES,
     SCHEMA_VERSION,
+    validate_reward_breakdown,
 )
-
-
-# Canonical top-level reward buckets that must be present (and numeric) in
-# every ``reward_breakdown`` payload. Enforced at deserialization time so
-# we fail fast on malformed or truncated trajectories before they poison
-# downstream benchmark metrics.
-_REWARD_BREAKDOWN_REQUIRED_KEYS: tuple[str, ...] = tuple(
-    key.value for key in RewardKey
-) + ("total",)
 
 
 def _coerce_reward_breakdown(
@@ -39,29 +31,7 @@ def _coerce_reward_breakdown(
     """
     if payload is None:
         return {}
-    if not isinstance(payload, Mapping):
-        raise ValueError(
-            f"{field_name} must be a mapping, got {type(payload).__name__}"
-        )
-    normalized: dict[str, Any] = {}
-    for raw_key, raw_value in payload.items():
-        normalized[str(raw_key)] = raw_value
-
-    missing = [
-        key for key in _REWARD_BREAKDOWN_REQUIRED_KEYS if key not in normalized
-    ]
-    if missing:
-        raise ValueError(
-            f"{field_name} missing required keys: {sorted(missing)}"
-        )
-
-    for key in _REWARD_BREAKDOWN_REQUIRED_KEYS:
-        value = normalized[key]
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(
-                f"{field_name}[{key!r}] must be numeric, got {type(value).__name__}"
-            )
-        normalized[key] = float(value)
+    normalized = validate_reward_breakdown(payload, field_name=field_name)
 
     components = normalized.get("components")
     if components is not None and not isinstance(components, Mapping):

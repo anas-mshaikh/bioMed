@@ -217,6 +217,7 @@ FORBIDDEN_PUBLIC_DATA_KEYS: frozenset[str] = frozenset(
         "candidate_family_scores",
         "artifact_risk",
         "false_negative_risk",
+        "pretreatment_sensitivity_band",
         "scenario_family",
         "difficulty",
         "blind_spot",

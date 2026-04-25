@@ -50,8 +50,13 @@ def test_ui_demo_run_baseline_records_multiple_steps(client, reset_session) -> N
 
 def test_ui_debug_enabled_reveals_debug_payload(client, reset_session, monkeypatch) -> None:
     monkeypatch.setenv("BIOMED_UI_DEBUG", "true")
-    state = client.get("/ui/state", headers=reset_session).json()
-    episode_id = state["current_episode_id"]
+    reset = client.post(
+        "/ui/demo/reset",
+        json={"seed": 7, "scenario_family": "high_crystallinity", "difficulty": "easy"},
+        headers=reset_session,
+    )
+    assert reset.status_code == 200
+    episode_id = reset.json()["current_episode"]["episode_id"]
 
     response = client.get(f"/ui/episodes/{episode_id}/debug", headers=reset_session)
     assert response.status_code == 200
@@ -60,4 +65,3 @@ def test_ui_debug_enabled_reveals_debug_payload(client, reset_session, monkeypat
     assert payload["enabled"] is True
     assert payload["hidden_truth_summary"]
     assert "terminal_score_breakdown" in payload
-

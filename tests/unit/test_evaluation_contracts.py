@@ -31,7 +31,18 @@ def _finalized_trajectory(*, confidence: float | None = 0.83) -> Trajectory:
         observation={"episode": {"episode_id": "episode-1", "step_count": 0}},
         reward=0.1,
         done=False,
-        reward_breakdown={"ordering": 0.1},
+        reward_breakdown={
+            "validity": 0.0,
+            "ordering": 0.1,
+            "info_gain": 0.0,
+            "efficiency": 0.0,
+            "novelty": 0.0,
+            "expert_management": 0.0,
+            "penalty": 0.0,
+            "shaping": 0.0,
+            "terminal": 0.0,
+            "total": 0.1,
+        },
     )
     trajectory.add_step(
         action=BioMedAction(
@@ -48,7 +59,18 @@ def _finalized_trajectory(*, confidence: float | None = 0.83) -> Trajectory:
         observation={"episode": {"episode_id": "episode-1", "step_count": 1}},
         reward=0.2,
         done=True,
-        reward_breakdown={"ordering": 0.2},
+        reward_breakdown={
+            "validity": 0.0,
+            "ordering": 0.2,
+            "info_gain": 0.0,
+            "efficiency": 0.0,
+            "novelty": 0.0,
+            "expert_management": 0.0,
+            "penalty": 0.0,
+            "shaping": 0.0,
+            "terminal": 0.0,
+            "total": 0.2,
+        },
     )
     return trajectory
 

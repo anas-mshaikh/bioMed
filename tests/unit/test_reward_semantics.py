@@ -210,6 +210,20 @@ def test_legal_actions_exclude_finalize_until_hypothesis_exists() -> None:
     assert ActionKind.FINALIZE_RECOMMENDATION in post_hypothesis_legal
 
 
+def test_hydrolysis_legality_requires_candidate_context() -> None:
+    latent = sample_episode_latent_state(
+        seed=19,
+        scenario_family="high_crystallinity",
+        difficulty="easy",
+    )
+    latent.discoveries["feedstock_inspected"] = True
+
+    legal_actions = RuleEngine().get_legal_next_actions(latent)
+
+    assert ActionKind.RUN_HYDROLYSIS_ASSAY not in legal_actions
+    assert ActionKind.RUN_THERMOSTABILITY_ASSAY not in legal_actions
+
+
 def test_repeated_same_expert_without_new_context_is_soft_violation() -> None:
     env = BioMedEnvironment()
     env.reset(seed=23, scenario_family="high_crystallinity", difficulty="easy")

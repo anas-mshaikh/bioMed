@@ -65,6 +65,8 @@ class _SessionRecord:
     episodes: "OrderedDict[str, _EpisodeRecord]" = field(default_factory=OrderedDict)
     current_episode_id: str | None = None
     last_used: float = field(default_factory=_now)
+    ui_warnings: list[str] = field(default_factory=list)
+    last_recorder_error: str | None = None
 
 
 class UIEpisodeStore:
@@ -223,6 +225,13 @@ class UIEpisodeStore:
             episode.debug = _copy_mapping(debug_snapshot)
             episode.last_used = now
 
+    def record_warning(self, session_id: str, message: str) -> None:
+        now = _now()
+        with self._lock:
+            session = self._get_or_create_session_locked(session_id, now)
+            session.ui_warnings.append(str(message))
+            session.last_recorder_error = str(message)
+
     def get_debug(self, session_id: str, episode_id: str) -> dict[str, Any] | None:
         with self._lock:
             session = self._sessions.get(session_id)
@@ -265,6 +274,8 @@ class UIEpisodeStore:
                 "session_id": session_id,
                 "episode_count": len(session.episodes),
                 "current_episode_id": session.current_episode_id,
+                "ui_warnings": list(session.ui_warnings),
+                "last_recorder_error": session.last_recorder_error,
                 "current_episode": _copy_mapping(current.summary) if current is not None else None,
                 "current_episode_replay": (
                     {

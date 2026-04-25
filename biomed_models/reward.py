@@ -3,7 +3,11 @@ from __future__ import annotations
 from pydantic import Field, computed_field
 
 from .action_params import StrictModel
-from .contract import RewardKey
+from collections.abc import Mapping
+
+from .contract import REWARD_COMPONENT_KEYS, RewardKey
+
+REQUIRED_REWARD_BREAKDOWN_KEYS: tuple[str, ...] = REWARD_COMPONENT_KEYS + ("total",)
 
 
 class RewardBreakdown(StrictModel):
@@ -68,3 +72,30 @@ class RewardBreakdown(StrictModel):
         self.terminal += other.terminal
         self.components.update(other.components)
         self.notes.extend(other.notes)
+
+
+def validate_reward_breakdown(
+    payload: Mapping[str, object] | None,
+    *,
+    field_name: str = "reward_breakdown",
+) -> dict[str, float | object]:
+    if payload is None:
+        raise ValueError(f"{field_name} is required for benchmark metrics")
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"{field_name} must be a mapping, got {type(payload).__name__}")
+
+    normalized = {str(key): value for key, value in payload.items()}
+    missing = [key for key in REQUIRED_REWARD_BREAKDOWN_KEYS if key not in normalized]
+    if missing:
+        raise ValueError(
+            f"{field_name} missing reward_breakdown required keys: {sorted(missing)}"
+        )
+
+    for key in REQUIRED_REWARD_BREAKDOWN_KEYS:
+        value = normalized[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(
+                f"{field_name}[{key!r}] must be numeric, got {type(value).__name__}"
+            )
+        normalized[key] = float(value)
+    return normalized

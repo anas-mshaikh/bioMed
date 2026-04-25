@@ -64,7 +64,7 @@ from .contract import (
     action_cost,
 )
 from .observation import ActionSpec, BioMedObservation, EpisodeInfo, ResourceSnapshot
-from .reward import RewardBreakdown
+from .reward import REQUIRED_REWARD_BREAKDOWN_KEYS, RewardBreakdown, validate_reward_breakdown
 from .semantics import (
     ACTION_COMPLETION_DISCOVERY_KEYS,
     EXPERT_GUIDANCE_FOLLOWUP_WINDOW,
@@ -155,6 +155,7 @@ __all__ = [
     "DecisionOutputData",
     "ResourceSnapshot",
     "RewardBreakdown",
+    "REQUIRED_REWARD_BREAKDOWN_KEYS",
     "RewardKey",
     "ScenarioFamily",
     "Stage",
@@ -180,5 +181,6 @@ __all__ = [
     "sample_characterization_count",
     "structured_expert_guidance_from_observation",
     "to_public_output_data",
+    "validate_reward_breakdown",
     "terminal_recommendation_rationale",
 ]

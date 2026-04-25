@@ -109,6 +109,7 @@ class BioMedToolEnv:
         self.active_difficulty: str | None = None
         self.training_reward = 0.0
         self.invalid_tool_calls = 0
+        self.truncated = False
 
     def reset(self, **kwargs: Any) -> str | None:
         self._close_backend()
@@ -117,6 +118,7 @@ class BioMedToolEnv:
         self.last_step_reward = 0.0
         self.raw_reward = 0.0
         self.done = False
+        self.truncated = False
         self.step_count = 0
 
         self.active_seed = self._coerce_int(kwargs.get("seed"), self.config.default_seed)
@@ -341,11 +343,19 @@ class BioMedToolEnv:
     def _act(self, action: BioMedAction) -> str:
         if self.step_count >= self.config.max_episode_steps:
             self.done = True
-            self.raw_reward = 0.0
+            self.truncated = True
+            self.last_step_reward = 0.0
+            self.raw_reward = self.reward
             self.training_reward = self._training_reward_value()
-            return self._tool_error(
-                f"Max episode steps reached: {self.config.max_episode_steps}. "
-                "The agent should have finalized earlier."
+            if self._last_observation is None:
+                raise RuntimeError("Call reset() before using BioMed tools.")
+            return self._render_observation(
+                observation=self._last_observation,
+                reward=None,
+                reward_breakdown=None,
+                hard_violations=None,
+                soft_violations=None,
+                phase="step",
             )
         if self.done and self.config.raise_on_done:
             raise ValueError("Episode is already done. Call reset() to start a new episode.")
@@ -393,6 +403,7 @@ class BioMedToolEnv:
         episode_payload = {
             "step_count": self.step_count,
             "done": self.done,
+            "truncated": self.truncated,
         }
         # For real training, keep it False.
         if self.config.include_episode_metadata:

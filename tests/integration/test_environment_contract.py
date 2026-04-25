@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 import json
 
-from biomed_models import ActionKind, BioMedAction, ExpertId, ExpertQueryParams
+from biomed_models import ACTION_COSTS, ActionKind, BioMedAction, ExpertId, ExpertQueryParams
+from server.bioMed_environment import BioMedEnvironment
 from training.tool_env import BioMedToolEnv
 
 
@@ -71,6 +72,34 @@ def test_tool_env_uses_environment_terminal_state() -> None:
 
     payload = json.loads(tool_env.inspect_feedstock())
 
-    assert payload["phase"] == "tool_error"
-    assert payload["done"] is True
+    assert payload["phase"] == "step"
+    assert payload["episode"]["truncated"] is True
+    assert payload["episode"]["done"] is True
     assert tool_env.done is True
+
+
+def test_resource_exact_depletion_allowed_then_done() -> None:
+    env = BioMedEnvironment()
+    env.reset(seed=7, scenario_family="high_crystallinity", difficulty="easy")
+
+    query_cost = float(ACTION_COSTS[ActionKind.QUERY_LITERATURE]["budget"])
+    env._latent.budget_spent = env._latent.budget_total - query_cost
+    env._latent.time_spent_days = env._latent.time_total_days
+
+    result = env.step(BioMedAction(action_kind=ActionKind.QUERY_LITERATURE))
+
+    assert result.done is True
+    assert env._latent.done_reason == "resources_exhausted"
+    assert float(result.reward_breakdown["terminal"]) < 0.0
+
+
+def test_tool_env_truncation_does_not_emit_invalid_tool_penalty() -> None:
+    tool_env = BioMedToolEnv()
+    tool_env.config.max_episode_steps = 0
+    tool_env.reset(seed=7, scenario_family="high_crystallinity", difficulty="easy")
+
+    payload = json.loads(tool_env.inspect_feedstock())
+
+    assert payload["phase"] == "step"
+    assert payload["episode"]["truncated"] is True
+    assert "invalid_tool_call_penalty" not in payload

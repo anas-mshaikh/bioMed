@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import logging
 from pathlib import Path
 from typing import Any
 import random
@@ -31,6 +32,7 @@ from .ui.serializers import redact_hidden_debug, ui_debug_enabled
 
 router = APIRouter(tags=["Judge UI"])
 _STATIC_ROOT = Path(__file__).resolve().parent / "ui" / "static"
+_LOGGER = logging.getLogger(__name__)
 
 
 def _app_module():
@@ -54,6 +56,29 @@ def _current_environment(session_id: str):
 
 def _store():
     return _app_module().ui_episode_store
+
+
+def _record_episode_debug_snapshot(session_id: str, episode_id: str) -> None:
+    if not ui_debug_enabled():
+        return
+    app_module = _app_module()
+    env = app_module.http_sessions.peek(session_id)
+    if env is None:
+        return
+    replay_payload = _store().get_episode(session_id, episode_id)
+    if replay_payload is None:
+        return
+    replay = build_episode_replay(
+        summary=replay_payload["episode"],
+        steps=replay_payload["steps"],
+    )
+    debug_snapshot = build_debug_snapshot(
+        episode_id=episode_id,
+        environment=env,
+        replay=replay,
+        hidden_truth_summary=env.truth_summary() if hasattr(env, "truth_summary") else {},
+    )
+    _store().set_debug(session_id, episode_id, debug_snapshot.model_dump(mode="json"))
 
 
 def _reset_environment(
@@ -94,6 +119,7 @@ def _reset_environment(
         _store().append_step(session_id, snapshot.episode_id, snapshot.model_dump(mode="json"))
         or summary
     )
+    _record_episode_debug_snapshot(session_id, snapshot.episode_id)
     return UIEpisodeSummary.model_validate(summary), snapshot
 
 
@@ -113,6 +139,7 @@ def _step_environment(
         step_result=result,
     )
     _store().append_step(session_id, snapshot.episode_id, snapshot.model_dump(mode="json"))
+    _record_episode_debug_snapshot(session_id, snapshot.episode_id)
     return snapshot
 
 
@@ -190,19 +217,10 @@ async def ui_episode_debug(request: Request, episode_id: str) -> UIDebugSnapshot
     if not ui_debug_enabled():
         raise HTTPException(status_code=403, detail=redact_hidden_debug())
     session_id = _session_id(request)
-    app_module = _app_module()
-    env = app_module.http_sessions.peek(session_id)
-    if env is None:
-        raise HTTPException(status_code=404, detail="No active environment for this session.")
-    replay = _replay_model(request, episode_id)
-    debug_snapshot = build_debug_snapshot(
-        episode_id=episode_id,
-        environment=env,
-        replay=replay,
-        hidden_truth_summary=env.truth_summary() if hasattr(env, "truth_summary") else {},
-    )
-    _store().set_debug(session_id, episode_id, debug_snapshot.model_dump(mode="json"))
-    return debug_snapshot
+    debug_payload = _store().get_debug(session_id, episode_id)
+    if debug_payload is None:
+        raise HTTPException(status_code=404, detail="Debug truth is not available for this episode.")
+    return UIDebugSnapshot.model_validate(debug_payload)
 
 
 @router.post("/ui/demo/reset", response_model=UILiveState)
@@ -232,7 +250,16 @@ async def ui_demo_run_baseline(request: Request, body: UIRunBaselineRequest) -> 
     session_id = _session_id(request)
     app_module = _app_module()
     env = app_module.http_sessions.peek(session_id)
-    if env is None or _store().get_live_state(session_id) is None:
+    live_state = _store().get_live_state(session_id)
+    should_reset = (
+        env is None
+        or live_state is None
+        or body.continue_current is False
+        or body.seed is not None
+        or body.scenario_family is not None
+        or body.difficulty is not None
+    )
+    if should_reset:
         _summary, _ = _reset_environment(
             request=request,
             reset_request=UIDemoResetRequest(
