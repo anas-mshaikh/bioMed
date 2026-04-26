@@ -10,8 +10,8 @@
     <div class="shell">
       <header class="topbar">
         <div>
-          <div class="eyebrow">BioMed Judge Cockpit</div>
-          <h1>PET Replay</h1>
+          <div class="eyebrow">Truely Agentic</div>
+          <h1>BioMed</h1>
         </div>
         <div class="controls">
           <label>Seed <input id="seed-input" type="number" value="7" /></label>
@@ -28,72 +28,81 @@
             </select>
           </label>
           <button id="reset-btn">Reset</button>
-          <button id="run-demo-btn">Run Demo</button>
           <button id="step-btn">Step</button>
-          <button id="judge-btn">Debug</button>
-          <button id="export-json-btn">Export JSON</button>
-          <button id="export-md-btn">Export Markdown</button>
+          <button id="run-demo-btn">Run Demo</button>
         </div>
       </header>
 
       <section id="banner" class="banner hidden"></section>
 
       <main class="grid">
-        <aside class="panel">
-          <h2>Episode</h2>
-          <div id="episode-summary" class="stack"></div>
+        <aside class="column">
+          <section class="section-card">
+            <h2>Episode</h2>
+            <div id="episode-summary" class="stack scroll-box"></div>
+          </section>
 
-          <h2>Scenario Cards</h2>
-          <div id="scenario-cards" class="cards"></div>
+          <section class="section-card">
+            <h2>Selected Scenario</h2>
+            <div id="scenario-info" class="scenario-info muted">Selected scenario will appear here.</div>
+          </section>
 
-          <h2>Pipeline</h2>
-          <div id="pipeline" class="pipeline"></div>
+          <section class="section-card">
+            <h2>Pipeline</h2>
+            <div id="pipeline" class="pipeline"></div>
+          </section>
         </aside>
 
-        <section class="panel main">
-          <div class="section-header">
-            <h2>Workflow Stations</h2>
-            <div id="status-pill" class="pill">Idle</div>
-          </div>
-          <div id="stations" class="stations"></div>
+        <section class="column main">
+          <section class="section-card">
+            <h2>Action Builder</h2>
+            <div class="builder">
+              <label>
+                Legal action
+                <select id="action-select"></select>
+              </label>
+              <div id="action-form" class="action-form"></div>
+            </div>
+          </section>
 
-          <h2>Action Builder</h2>
-          <div class="builder">
-            <label>
-              Legal action
-              <select id="action-select"></select>
-            </label>
-            <div id="action-form" class="action-form"></div>
-          </div>
-
-          <h2>Timeline</h2>
-          <div id="timeline" class="timeline"></div>
+          <section class="section-card">
+            <h2>Timeline</h2>
+            <div id="timeline" class="timeline"></div>
+          </section>
         </section>
 
-        <aside class="panel">
-          <h2>Reward</h2>
-          <div class="metric-row">
-            <div>
-              <div class="metric-label">Step</div>
-              <div id="step-reward" class="metric-value mono">—</div>
+        <aside class="column">
+          <section class="section-card">
+            <h2>Reward</h2>
+            <div class="metric-row">
+              <div>
+                <div class="metric-label">Step</div>
+                <div id="step-reward" class="metric-value mono">—</div>
+              </div>
+              <div>
+                <div class="metric-label">Cumulative</div>
+                <div id="cum-reward" class="metric-value mono">—</div>
+              </div>
             </div>
-            <div>
-              <div class="metric-label">Cumulative</div>
-              <div id="cum-reward" class="metric-value mono">—</div>
-            </div>
-          </div>
-          <div id="reward-breakdown" class="bars"></div>
+            <div id="reward-breakdown" class="bars"></div>
+          </section>
 
-          <h2>Latest Output</h2>
-          <div id="latest-output" class="stack"></div>
+          <section class="section-card">
+            <h2>Latest Output</h2>
+            <div id="latest-output" class="latest-output"></div>
+          </section>
 
-          <h2>Signals</h2>
-          <div id="signal-block" class="stack"></div>
+          <section class="section-card">
+            <h2>Signals</h2>
+            <div id="signal-block" class="stack"></div>
+          </section>
 
-          <h2>Debug</h2>
-          <pre id="judge-panel" class="judge-panel">
-Hidden truth is off.</pre
-          >
+          <section class="section-card">
+            <h2>Review</h2>
+            <pre id="judge-panel" class="judge-panel">
+No debug snapshot.</pre
+            >
+          </section>
         </aside>
       </main>
     </div>

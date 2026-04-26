@@ -39,14 +39,10 @@ function formatNumber(value) {
   return n.toFixed(4);
 }
 
-function availableScenarioCards(cards) {
-  return (cards || []).filter((card) => card && card.available !== false);
-}
-
 function renderScenarioSelect(cards) {
   const select = el("scenario-select");
   const preferred = selectedScenarioFamily || select.value || null;
-  const visibleCards = availableScenarioCards(cards);
+  const visibleCards = cards || [];
   select.innerHTML = "";
   visibleCards.forEach((card) => {
     const option = document.createElement("option");
@@ -62,40 +58,22 @@ function renderScenarioSelect(cards) {
   selectedScenarioFamily = select.value || null;
 }
 
-function renderScenarioCards(cards) {
-  const root = el("scenario-cards");
-  root.innerHTML = "";
-  availableScenarioCards(cards).forEach((card) => {
-    const node = document.createElement("article");
-    node.className = "card available";
-    node.innerHTML = `
-      <div class="card-title">
-        <strong>${escapeHtml(card.title)}</strong>
-        <span class="pill">ready</span>
-      </div>
-      <div class="muted">${escapeHtml(card.subtitle || "")}</div>
-      <p>${escapeHtml(card.description || "")}</p>
-      <div class="muted">${escapeHtml(card.benchmark_role || "")}</div>
-    `;
-    root.appendChild(node);
-  });
-}
-
-function renderStations(stationMap, activeStation) {
-  const root = el("stations");
-  root.innerHTML = "";
-  stationMap.forEach((item) => {
-    const station = item.station || item;
-    const node = document.createElement("article");
-    node.className = `station ${station === activeStation ? "active" : ""}`;
-    node.innerHTML = `
-      <div class="station-title">
-        <strong>${escapeHtml(station)}</strong>
-        <span class="pill">${station === activeStation ? "active" : "idle"}</span>
-      </div>
-    `;
-    root.appendChild(node);
-  });
+function renderSelectedScenarioInfo(cards) {
+  const root = el("scenario-info");
+  const family = selectedScenarioFamily || el("scenario-select")?.value || null;
+  const card = (cards || []).find((item) => item && item.scenario_family === family) || null;
+  if (!card) {
+    root.textContent = "Selected scenario will appear here.";
+    return;
+  }
+  const parts = [card.title || card.scenario_family];
+  if (card.subtitle) parts.push(card.subtitle);
+  if (card.description) parts.push(card.description);
+  root.innerHTML = `
+    <strong>${escapeHtml(parts[0])}</strong>
+    ${parts[1] ? `<div>${escapeHtml(parts[1])}</div>` : ""}
+    ${parts[2] ? `<div>${escapeHtml(parts[2])}</div>` : ""}
+  `;
 }
 
 function renderEpisodeSummary(state) {
@@ -128,32 +106,17 @@ function renderEpisodeSummary(state) {
 
 function renderPipeline(currentSnapshot) {
   const root = el("pipeline");
-  const steps = [
-    ["Feedstock Intake", "inspect_feedstock"],
-    ["Sample Characterization", "measure_crystallinity"],
-    ["Literature Terminal", "query_literature"],
-    ["Candidate Registry", "query_candidate_registry"],
-    ["Stability Chamber", "run_thermostability_assay"],
-    ["Assay Bench", "run_hydrolysis_assay"],
-    ["Pretreatment Bench", "test_pretreatment"],
-    ["Cocktail Testing", "test_cocktail"],
-    ["Expert Review Table", "ask_expert"],
-    ["Final Recommendation Board", "finalize_recommendation"],
-  ];
   root.innerHTML = "";
-  steps.forEach(([label, actionKind]) => {
-    const node = document.createElement("div");
-    const active = currentSnapshot?.active_station === label;
-    const done = currentSnapshot?.legal_next_actions?.some((item) => item.action_kind === actionKind);
-    node.className = `pipeline-step ${active ? "current" : ""} ${done ? "done" : ""}`;
-    node.innerHTML = `
-      <div class="bar-head">
-        <strong>${escapeHtml(label)}</strong>
-        <span class="pill">${active ? "current" : done ? "available" : "—"}</span>
-      </div>
-    `;
-    root.appendChild(node);
-  });
+  const activeStation = currentSnapshot?.active_station || "Idle";
+  const node = document.createElement("div");
+  node.className = "pipeline-step current";
+  node.innerHTML = `
+    <div class="bar-head">
+      <strong>${escapeHtml(activeStation)}</strong>
+      <span class="pill">current</span>
+    </div>
+  `;
+  root.appendChild(node);
 }
 
 function renderReward(snapshot, rewardLabels) {
@@ -203,13 +166,22 @@ function renderLatestOutput(snapshot) {
     root.innerHTML = `<div class="muted">No latest output.</div>`;
     return;
   }
-  root.innerHTML = `
-    <div class="latest-item"><div class="muted">Type</div><div class="mono">${escapeHtml(output.output_type)}</div></div>
-    <div class="latest-item"><div class="muted">Summary</div><div>${escapeHtml(output.summary)}</div></div>
-    <div class="latest-item"><div class="muted">Success</div><div class="mono">${escapeHtml(output.success)}</div></div>
-    <div class="latest-item"><div class="muted">Confidence</div><div class="mono">${escapeHtml(formatNumber(output.quality_score))}</div></div>
-    <div class="latest-item"><div class="muted">Uncertainty</div><div class="mono">${escapeHtml(formatNumber(output.uncertainty))}</div></div>
-  `;
+  const items = [
+    ["Type", output.output_type, true],
+    ["Summary", output.summary, false],
+    ["Success", output.success, true],
+    ["Confidence", formatNumber(output.quality_score), true],
+    ["Uncertainty", formatNumber(output.uncertainty), true],
+  ];
+  root.innerHTML = items
+    .map(
+      ([label, value, mono]) => `
+        <div class="output-card">
+          <div class="muted">${escapeHtml(label)}</div>
+          <div class="${mono ? "mono" : ""}">${escapeHtml(value)}</div>
+        </div>`
+    )
+    .join("");
 }
 
 function renderSignals(snapshot) {
@@ -447,28 +419,19 @@ async function fetchJson(url, options = {}) {
   return body;
 }
 
-function updateExportsButtons(state) {
-  const enabled = Boolean(state?.current_episode_id);
-  el("export-json-btn").disabled = !enabled;
-  el("export-md-btn").disabled = !enabled;
-}
-
 function renderState(state) {
   currentState = state;
   hideBanner();
   renderScenarioSelect(state.scenario_cards || []);
-  renderScenarioCards(state.scenario_cards || []);
+  renderSelectedScenarioInfo(state.scenario_cards || []);
   renderEpisodeSummary(state);
-  renderStations(state.station_map || [], state.current_snapshot?.active_station);
   renderPipeline(state.current_snapshot);
   renderReward(state.current_snapshot, state.reward_labels || {});
   renderLatestOutput(state.current_snapshot);
   renderSignals(state.current_snapshot);
   renderTimeline(state.current_episode_replay?.steps || []);
   renderActionBuilder(state.current_snapshot);
-  updateExportsButtons(state);
-  const status = el("status-pill");
-  status.textContent = state.current_episode?.done ? "Done" : state.current_episode ? "Active" : "Idle";
+  refreshJudgePanel();
 }
 
 async function refreshState() {
@@ -528,25 +491,18 @@ async function doRunBaseline() {
   }
 }
 
-async function doJudgeMode() {
+async function refreshJudgePanel() {
+  const panel = el("judge-panel");
   if (!currentEpisodeId) {
-    showBanner("No episode yet.", "bad");
+    panel.textContent = "No debug snapshot.";
     return;
   }
-  const panel = el("judge-panel");
   try {
     const data = await fetchJson(`/ui/episodes/${encodeURIComponent(currentEpisodeId)}/debug`);
     panel.textContent = JSON.stringify(data, null, 2);
-  } catch (error) {
-    panel.textContent = "Hidden truth is off.";
-    showBanner(error.message || String(error), "warn");
+  } catch (_error) {
+    panel.textContent = "No debug snapshot.";
   }
-}
-
-async function exportEpisode(format) {
-  if (!currentEpisodeId) return;
-  const url = `/ui/export/${encodeURIComponent(currentEpisodeId)}.${format}`;
-  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -555,6 +511,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
   el("scenario-select").addEventListener("change", (event) => {
     selectedScenarioFamily = event.target.value || null;
+    renderSelectedScenarioInfo(currentState?.scenario_cards || []);
   });
   el("difficulty-select").addEventListener("change", (event) => {
     selectedDifficulty = event.target.value || null;
@@ -565,9 +522,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   el("reset-btn").addEventListener("click", doReset);
   el("step-btn").addEventListener("click", doStep);
   el("run-demo-btn").addEventListener("click", doRunBaseline);
-  el("judge-btn").addEventListener("click", doJudgeMode);
-  el("export-json-btn").addEventListener("click", () => exportEpisode("json"));
-  el("export-md-btn").addEventListener("click", () => exportEpisode("md"));
   selectedSeed = Number(el("seed-input").value || 7);
   selectedDifficulty = el("difficulty-select").value || null;
   await refreshState();

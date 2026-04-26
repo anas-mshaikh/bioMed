@@ -29,6 +29,7 @@ html,
 body {
   margin: 0;
   min-height: 100%;
+  overflow-x: hidden;
   background:
     radial-gradient(circle at 15% 10%, rgba(103, 216, 255, 0.15), transparent 34%),
     radial-gradient(circle at 85% 8%, rgba(167, 139, 250, 0.12), transparent 24%),
@@ -59,9 +60,9 @@ body::before {
 
 .shell {
   position: relative;
-  max-width: 1600px;
+  max-width: 1520px;
   margin: 0 auto;
-  padding: 20px;
+  padding: 16px;
 }
 
 .topbar {
@@ -74,7 +75,7 @@ body::before {
   align-items: flex-start;
   gap: 14px;
   margin-bottom: 18px;
-  padding: 16px;
+  padding: 12px 14px;
   border-radius: var(--radius-lg);
   background: linear-gradient(140deg, rgba(15, 28, 45, 0.95), rgba(10, 21, 35, 0.92));
   border: 1px solid var(--line);
@@ -104,7 +105,7 @@ h1 {
 
 h2 {
   margin-bottom: 11px;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   letter-spacing: 0.02em;
   color: #9ed8ff;
 }
@@ -122,7 +123,7 @@ h2 {
   flex-direction: column;
   gap: 6px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
 }
 
@@ -136,7 +137,7 @@ textarea {
   background: rgba(7, 15, 24, 0.88);
   color: var(--text);
   font: inherit;
-  padding: 10px 12px;
+  padding: 8px 10px;
   transition:
     border-color 130ms ease,
     box-shadow 130ms ease,
@@ -197,25 +198,33 @@ button:disabled {
 
 .grid {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr) 340px;
-  gap: 16px;
+  grid-template-columns: minmax(220px, 290px) minmax(0, 1fr) minmax(250px, 320px);
+  gap: 12px;
 }
 
-.panel {
+.column {
   display: grid;
   align-content: start;
-  gap: 4px;
-  min-height: 140px;
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  background: linear-gradient(155deg, var(--panel-strong), var(--panel));
-  box-shadow: var(--shadow-lg);
-  backdrop-filter: blur(14px);
+  gap: 10px;
+  min-width: 0;
 }
 
-.main {
+.column.main {
   min-height: 820px;
+  max-height: calc(100vh - 150px);
+  overflow: visible;
+  padding: 0;
+}
+
+.section-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(7, 15, 24, 0.42);
+  overflow: auto;
+  max-height: 34vh;
 }
 
 .banner {
@@ -242,7 +251,21 @@ button:disabled {
 .stack {
   display: grid;
   gap: 10px;
-  margin-bottom: 18px;
+}
+
+.scroll-box {
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.scroll-box::-webkit-scrollbar {
+  width: 8px;
+}
+
+.scroll-box::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(103, 216, 255, 0.28);
 }
 
 .metric-row {
@@ -256,17 +279,17 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: rgba(10, 20, 33, 0.75);
-  padding: 10px 11px;
+  padding: 8px 9px;
 }
 
 .metric-label {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   margin-bottom: 5px;
 }
 
 .metric-value {
-  font-size: 1.22rem;
+  font-size: 1.05rem;
   font-weight: 700;
 }
 
@@ -291,17 +314,27 @@ button:disabled {
   gap: 10px;
 }
 
+.latest-output {
+  display: grid;
+  gap: 8px;
+}
+
 .card,
 .station,
 .pipeline-step,
 .bar,
 .timeline-item,
 .signal-item,
-.latest-item {
+.output-card {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: linear-gradient(165deg, rgba(18, 33, 52, 0.84), rgba(12, 22, 36, 0.8));
-  padding: 12px;
+  padding: 10px;
+}
+
+.output-card {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .card.available {
@@ -328,7 +361,7 @@ button:disabled {
   align-items: center;
   gap: 6px;
   border-radius: 999px;
-  padding: 6px 11px;
+  padding: 5px 9px;
   border: 1px solid rgba(103, 216, 255, 0.28);
   background: rgba(103, 216, 255, 0.13);
   color: var(--cyan);
@@ -403,9 +436,10 @@ button:disabled {
 
 .timeline-body,
 .signal-item,
-.latest-item {
+.output-card {
   color: var(--text);
-  font-size: 13px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .timeline {
@@ -414,11 +448,15 @@ button:disabled {
   padding-right: 4px;
 }
 
-.timeline::-webkit-scrollbar {
+.column::-webkit-scrollbar,
+.timeline::-webkit-scrollbar,
+.scroll-box::-webkit-scrollbar {
   width: 9px;
 }
 
-.timeline::-webkit-scrollbar-thumb {
+.column::-webkit-scrollbar-thumb,
+.timeline::-webkit-scrollbar-thumb,
+.scroll-box::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: rgba(152, 174, 196, 0.35);
 }
@@ -427,8 +465,8 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: rgba(10, 20, 32, 0.75);
-  padding: 12px;
-  margin-bottom: 16px;
+  padding: 10px;
+  margin-bottom: 12px;
 }
 
 .action-form {
@@ -442,8 +480,8 @@ button:disabled {
   border-radius: var(--radius-md);
   border: 1px solid rgba(251, 113, 133, 0.26);
   background: rgba(6, 12, 20, 0.92);
-  padding: 12px;
-  font-size: 12px;
+  padding: 10px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -472,7 +510,7 @@ button:disabled {
     position: static;
   }
 
-  .main {
+  .column.main {
     min-height: auto;
   }
 }
@@ -482,7 +520,6 @@ button:disabled {
     padding: 12px;
   }
 
-  .panel,
   .topbar {
     padding: 12px;
     border-radius: 16px;
@@ -500,4 +537,3 @@ button:disabled {
     width: 100%;
   }
 }
-

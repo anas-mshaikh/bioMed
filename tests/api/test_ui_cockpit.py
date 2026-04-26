@@ -26,13 +26,15 @@ def test_ui_state_redacts_hidden_truth_by_default(client, reset_session) -> None
     assert_no_hidden_keys(snapshot["visible_state"])
 
 
-def test_ui_debug_requires_flag(client, reset_session) -> None:
+def test_ui_debug_is_clickable_without_gate(client, reset_session) -> None:
     state = client.get("/ui/state", headers=reset_session).json()
     episode_id = state["current_episode_id"]
 
     response = client.get(f"/ui/episodes/{episode_id}/debug", headers=reset_session)
-    assert response.status_code == 403
-    assert "Hidden truth is disabled" in response.json()["detail"]
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["episode_id"] == episode_id
+    assert "hidden_truth_summary" in payload
 
 
 def test_ui_snapshot_has_required_fields(client, reset_session) -> None:

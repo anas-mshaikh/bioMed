@@ -27,7 +27,7 @@ from .ui.recorder import (
     snapshot_to_markdown,
     snapshot_to_public_json,
 )
-from .ui.serializers import redact_hidden_debug, ui_debug_enabled
+from .ui.serializers import ui_debug_enabled
 
 
 router = APIRouter(tags=["Judge UI"])
@@ -59,8 +59,6 @@ def _store():
 
 
 def _record_episode_debug_snapshot(session_id: str, episode_id: str) -> None:
-    if not ui_debug_enabled():
-        return
     app_module = _app_module()
     env = app_module.http_sessions.peek(session_id)
     if env is None:
@@ -76,7 +74,7 @@ def _record_episode_debug_snapshot(session_id: str, episode_id: str) -> None:
         episode_id=episode_id,
         environment=env,
         replay=replay,
-        hidden_truth_summary=env.truth_summary() if hasattr(env, "truth_summary") else {},
+        hidden_truth_summary=env.truth_summary() if ui_debug_enabled() and hasattr(env, "truth_summary") else {},
     )
     _store().set_debug(session_id, episode_id, debug_snapshot.model_dump(mode="json"))
 
@@ -214,12 +212,10 @@ async def ui_episode_steps(request: Request, episode_id: str) -> list[UIStepSnap
 
 @router.get("/ui/episodes/{episode_id}/debug", response_model=UIDebugSnapshot)
 async def ui_episode_debug(request: Request, episode_id: str) -> UIDebugSnapshot:
-    if not ui_debug_enabled():
-        raise HTTPException(status_code=403, detail=redact_hidden_debug())
     session_id = _session_id(request)
     debug_payload = _store().get_debug(session_id, episode_id)
     if debug_payload is None:
-        raise HTTPException(status_code=404, detail="Debug truth is not available for this episode.")
+        raise HTTPException(status_code=404, detail="Debug snapshot is not available for this episode.")
     return UIDebugSnapshot.model_validate(debug_payload)
 
 

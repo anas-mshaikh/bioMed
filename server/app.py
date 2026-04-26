@@ -23,6 +23,7 @@ from biomed_models import (
 from server.bioMed_environment import BioMedEnvironment
 from server.ui.recorder import record_reset as ui_record_reset, record_step as ui_record_step
 from server.ui.store import UIEpisodeStore
+from server.ui_api import _record_episode_debug_snapshot as ui_record_debug_snapshot
 
 
 HTTP_SESSION_COOKIE = "biomed_http_session"
@@ -173,6 +174,7 @@ def _record_reset_snapshot(
         },
     )
     ui_episode_store.append_step(session_id, snapshot.episode_id, snapshot.model_dump(mode="json"))
+    ui_record_debug_snapshot(session_id, snapshot.episode_id)
 
 
 def _record_step_snapshot(
@@ -190,6 +192,7 @@ def _record_step_snapshot(
         step_result=result,
     )
     ui_episode_store.append_step(session_id, snapshot.episode_id, snapshot.model_dump(mode="json"))
+    ui_record_debug_snapshot(session_id, snapshot.episode_id)
 
 
 def _record_ui_failure(session_id: str, message: str) -> None:
