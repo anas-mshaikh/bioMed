@@ -1,21 +1,3 @@
----
-title: BioMed | OpenEnv PET bioremediation benchmark
-emoji: 🧪
-colorFrom: green
-colorTo: blue
-sdk: docker
-pinned: false
-app_port: 8000
-base_path: /web
-tags:
-  - openenv
-  - huggingface
-  - environment
-  - benchmark
-  - reinforcement-learning
-  - science
----
-
 # BioMed
 
 [![OpenEnv](https://img.shields.io/badge/OpenEnv-compatible-0b7285)](https://huggingface.co/docs/openenv)
@@ -39,6 +21,8 @@ BioMed is built to be judged as a benchmark artifact:
 - **Demo:** browser UI for live demo, replay inspection, reward breakdowns, and explicitly gated hidden-truth debug mode.
 
 > BioMed is not a generic app and not a wet-lab automation platform. It is a PET-only, hidden-state, long-horizon OpenEnv benchmark for evaluating scientific planning agents.
+
+For the longer narrative / Hugging Face-style writeup, see [BioMed_blog.md](BioMed_blog.md).
 
 ---
 
