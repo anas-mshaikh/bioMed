@@ -435,6 +435,7 @@ def save_training_plots(
     out_dir: Path,
     log_history: list[dict[str, Any]],
     metric_key: str | None,
+    reward_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     try:
         import matplotlib.pyplot as plt
@@ -558,6 +559,63 @@ def save_training_plots(
         plt.savefig(dashboard_path)
         plt.close()
         manifest["files"].append(dashboard_path.name)
+
+    # 5. Diagnostic plots from reward_trace.jsonl
+    if reward_trace:
+        try:
+            trace_batches = list(range(len(reward_trace)))
+
+            def _trace_series(key: str) -> list[float]:
+                return [float(r.get(key, 0.0) or 0.0) for r in reward_trace]
+
+            valid_json_rates = _trace_series("valid_json_rate")
+            legal_action_rates = _trace_series("legal_action_rate")
+            env_reward_means = _trace_series("env_reward_mean")
+            reward_stds = _trace_series("reward_std")
+
+            plt.figure(figsize=(12, 8))
+
+            plt.subplot(2, 2, 1)
+            plt.plot(trace_batches, valid_json_rates, label="valid_json")
+            plt.plot(trace_batches, legal_action_rates, label="legal_action")
+            plt.xlabel("batch")
+            plt.ylabel("rate")
+            plt.title("Parse quality rates")
+            plt.legend()
+
+            plt.subplot(2, 2, 2)
+            plt.plot(trace_batches, env_reward_means)
+            plt.xlabel("batch")
+            plt.ylabel("mean reward")
+            plt.title("Env reward mean")
+
+            plt.subplot(2, 2, 3)
+            plt.plot(trace_batches, reward_stds)
+            plt.xlabel("batch")
+            plt.ylabel("std")
+            plt.title("Reward std (GRPO signal health)")
+
+            # Action distribution in last batch
+            plt.subplot(2, 2, 4)
+            last_counts = reward_trace[-1].get("action_kind_counts", {})
+            if last_counts and isinstance(last_counts, dict):
+                kinds = list(last_counts.keys())
+                counts = [last_counts[k] for k in kinds]
+                short_kinds = [k[:10] for k in kinds]
+                plt.bar(range(len(kinds)), counts)
+                plt.xticks(range(len(kinds)), short_kinds, rotation=45, ha="right", fontsize=7)
+                plt.title("Action dist (last batch)")
+            else:
+                plt.text(0.5, 0.5, "No action counts", ha="center", va="center")
+                plt.axis("off")
+
+            diag_path = out_dir / "training_diagnostics.png"
+            plt.tight_layout()
+            plt.savefig(diag_path)
+            plt.close()
+            manifest["files"].append(diag_path.name)
+        except Exception:
+            pass
 
     save_json(out_dir / "training_plot_manifest.json", manifest)
     return manifest

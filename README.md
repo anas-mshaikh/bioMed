@@ -230,3 +230,44 @@ bioMed/
 - HTTP endpoints remain available and isolated, but they are documented as secondary/debug-safe rather than the main benchmark interaction mode.
 - The benchmark is designed for reproducible same-seed episodes and hidden-state evaluation.
 - Reward and evaluation tooling exist, but this repository should still be judged first as an environment artifact.
+
+
+
+# Run 1 — Curriculum smoke (sanity gate)
+
+python -m training.training_unsloth 
+  --training-mode single_action_curriculum 
+  --model-id Qwen/Qwen3-0.6B 
+  --dataset-episodes 32 --rollout-steps 3 --trainer-max-steps 120 
+  --num-generations 4 --max-seq-length 1024 --lora-r 8 --lora-alpha 16 
+  --gradient-accumulation-steps 2 
+  --output-dir outputs/training/curriculum_smoke_120
+
+# Run 2 — Full-action smoke
+
+python -m training.training_unsloth 
+  --training-mode full_action_grpo 
+  --model-id Qwen/Qwen3-0.6B 
+  --dataset-episodes 64 --rollout-steps 5 --trainer-max-steps 150 
+  --num-generations 4 --max-seq-length 1536 --max-prompt-length 1024 
+  --lora-r 8 --lora-alpha 16 --gradient-accumulation-steps 2 
+  --collection-policy mixed 
+  --output-dir outputs/training/full_action_smoke_150
+
+# After Run 2 — evaluate
+
+python -m training.evaluate_policy 
+  --model-dir outputs/training/full_action_smoke_150 
+  --output-dir outputs/training/full_action_smoke_150/eval 
+  --eval-episodes 64 --heldout-seed-offset 10000
+
+# Run 3 — Main full-action run
+
+python -m training.training_unsloth
+  --training-mode full_action_grpo
+  --model-id Qwen/Qwen3-0.6B
+  --dataset-episodes 128 --rollout-steps 8 --trainer-max-steps 300
+  --num-generations 6 --max-seq-length 1536 --max-prompt-length 1024
+  --lora-r 16 --lora-alpha 32 --gradient-accumulation-steps 4
+  --collection-policy mixed
+  --output-dir outputs/training/full_action_300
