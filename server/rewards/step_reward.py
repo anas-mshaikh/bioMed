@@ -407,8 +407,11 @@ class StepRewardEngine:
         uncertainty = _clip(uncertainty, self.config.uncertainty_floor, 1.0)
 
         base_signal = quality * (1.0 - uncertainty)
+        milestone_delta = _milestone_delta(prev_state, next_state)
+        if milestone_delta <= 0:
+            base_signal = 0.0
 
-        milestone_gain = _milestone_delta(prev_state, next_state) * self.config.milestone_gain_bonus
+        milestone_gain = milestone_delta * self.config.milestone_gain_bonus
 
         raw = base_signal + milestone_gain
         return self.config.info_gain_weight * _clip(raw, 0.0, 1.5)
@@ -442,7 +445,12 @@ class StepRewardEngine:
             info_gain_score / max(self.config.info_gain_weight, 1e-6), 0.0, 1.0
         )
 
-        if action_kind in {"query_literature", "query_candidate_registry"} and raw_eff > 0:
+        completed_actions = completed_action_kinds(_discoveries(prev_state))
+        if (
+            action_kind in {"query_literature", "query_candidate_registry"}
+            and raw_eff > 0
+            and action_kind not in completed_actions
+        ):
             raw_eff = min(1.0, raw_eff + 0.02)
 
         return self.config.efficiency_weight * raw_eff * info_multiplier

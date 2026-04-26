@@ -546,6 +546,21 @@ class BioMedTransitionEngine:
         time_delta_days: int,
     ) -> TransitionEffect:
         s.progress.stage = "triage"
+
+        already_reviewed = s.discoveries.get("literature_reviewed", False)
+        if already_reviewed:
+            caveat_note = "Literature already reviewed; no new information gained."
+            return TransitionEffect(
+                effect_type="literature",
+                summary="Literature already queried. No new evidence added.",
+                success=False,
+                quality_score=0.0,
+                warnings=[caveat_note],
+                data={"caveat_note": caveat_note},
+                budget_delta=budget_delta,
+                time_delta_days=time_delta_days,
+            )
+
         s.progress.queried_literature = True
         s.progress.mark_milestone("literature_reviewed")
 

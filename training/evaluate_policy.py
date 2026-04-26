@@ -118,6 +118,7 @@ class TrainedModelPolicy(BasePolicy):
         with _no_grad():
             outputs = self._model.generate(
                 inputs,
+                max_length=None,
                 max_new_tokens=self._max_new_tokens,
                 temperature=self._temperature,
                 do_sample=self._temperature > 0.0,

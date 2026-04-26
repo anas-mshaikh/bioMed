@@ -164,6 +164,48 @@ def test_completed_action_repeats_get_strong_penalty(
     assert penalty == pytest.approx(-0.5)
 
 
+def test_info_gain_zero_without_milestone_delta() -> None:
+    engine = _step_reward_engine()
+    prev_state = _state({"literature_reviewed": True})
+    next_state = _state({"literature_reviewed": True})
+    output = SimpleNamespace(quality_score=0.84, uncertainty=0.16)
+
+    score = engine._information_gain_score(output, prev_state, next_state)
+
+    assert score == 0.0
+
+
+def test_efficiency_boost_skipped_for_completed_literature() -> None:
+    engine = _step_reward_engine()
+    prev_state = _state({"literature_reviewed": True})
+    next_state = _state({"literature_reviewed": True})
+    next_state.budget_spent = 2.1
+
+    score = engine._efficiency_score(
+        "query_literature",
+        prev_state,
+        next_state,
+        info_gain_score=engine.config.info_gain_weight,
+    )
+
+    expected_raw_eff = 1.0 - engine.config.budget_sensitivity * (0.1 / 10.0)
+    assert score == pytest.approx(engine.config.efficiency_weight * expected_raw_eff)
+
+
+def test_repeated_literature_gets_negative_net_reward() -> None:
+    env = BioMedEnvironment()
+    env.reset(seed=29, scenario_family="high_crystallinity", difficulty="easy")
+    action = BioMedAction(action_kind=ActionKind.QUERY_LITERATURE)
+
+    first = env.step(action)
+    second = env.step(action)
+
+    assert first.reward > 0.0
+    assert second.reward < 0.0
+    assert second.reward_breakdown["info_gain"] == 0.0
+    assert second.reward_breakdown["validity"] == 0.0
+
+
 def test_finalize_from_reset_is_blocked() -> None:
     latent = sample_episode_latent_state(
         seed=7,
