@@ -360,6 +360,7 @@ class BioMedOpenEnvReward:
 
         try:
             from training.action_registry import _try_parse_json
+
             payload = _try_parse_json(text)
             if payload is None:
                 raise ValueError("no JSON")
@@ -461,9 +462,7 @@ class BioMedOpenEnvReward:
             "env_reward_mean": sum(env_rewards) / n_scored if env_rewards else 0.0,
             "reward_std": _std(all_rewards),
             "completion_length_mean": sum(diag["completion_lengths"]) / n,
-            "reward_breakdown_means": {
-                k: v / n_scored for k, v in bd_sums.items()
-            },
+            "reward_breakdown_means": {k: v / n_scored for k, v in bd_sums.items()},
         }
 
         try:
@@ -540,13 +539,15 @@ def render_obs_for_prompt(obs: Any, history_actions: Any = None) -> str:
 
     # Concise artifacts (id + type only to keep prompt short)
     artifacts_summary: list[dict[str, Any]] = []
-    for artifact in (data.get("artifacts") or []):
+    for artifact in data.get("artifacts") or []:
         if isinstance(artifact, dict):
-            artifacts_summary.append({
-                "artifact_id": artifact.get("artifact_id"),
-                "artifact_type": artifact.get("artifact_type"),
-                "summary": artifact.get("summary"),
-            })
+            artifacts_summary.append(
+                {
+                    "artifact_id": artifact.get("artifact_id"),
+                    "artifact_type": artifact.get("artifact_type"),
+                    "summary": artifact.get("summary"),
+                }
+            )
 
     # Expert inbox (most recent entry)
     expert_inbox = data.get("expert_inbox") or []
@@ -555,7 +556,7 @@ def render_obs_for_prompt(obs: Any, history_actions: Any = None) -> str:
         latest_expert = expert_inbox[-1] if isinstance(expert_inbox[-1], dict) else None
 
     warnings_list: list[str] = []
-    for w in (data.get("warnings") or []):
+    for w in data.get("warnings") or []:
         if isinstance(w, str):
             warnings_list.append(w)
         elif isinstance(w, dict):
@@ -675,9 +676,7 @@ def build_unsloth_prompt_examples(config: BioMedUnslothConfig) -> list[dict[str,
                     "difficulty": config.difficulty,
                     "history_actions": json.dumps(
                         [
-                            act.model_dump(mode="json")
-                            if hasattr(act, "model_dump")
-                            else act
+                            act.model_dump(mode="json") if hasattr(act, "model_dump") else act
                             for act in history_actions
                         ],
                         ensure_ascii=False,
@@ -871,13 +870,20 @@ def make_heuristic_action(
         return _empty(ActionKind.INSPECT_FEEDSTOCK, "Collect cheap first-pass feedstock evidence.")
 
     if action_kind == "measure_crystallinity":
-        return _empty(ActionKind.MEASURE_CRYSTALLINITY, "Quantify crystallinity to determine substrate accessibility.")
+        return _empty(
+            ActionKind.MEASURE_CRYSTALLINITY,
+            "Quantify crystallinity to determine substrate accessibility.",
+        )
 
     if action_kind == "measure_contamination":
-        return _empty(ActionKind.MEASURE_CONTAMINATION, "Measure contamination to rule out assay artifacts.")
+        return _empty(
+            ActionKind.MEASURE_CONTAMINATION, "Measure contamination to rule out assay artifacts."
+        )
 
     if action_kind == "estimate_particle_size":
-        return _empty(ActionKind.ESTIMATE_PARTICLE_SIZE, "Estimate particle size to inform pretreatment need.")
+        return _empty(
+            ActionKind.ESTIMATE_PARTICLE_SIZE, "Estimate particle size to inform pretreatment need."
+        )
 
     if action_kind == "query_literature":
         return BioMedAction(
@@ -896,7 +902,10 @@ def make_heuristic_action(
         )
 
     if action_kind == "estimate_stability_signal":
-        return _empty(ActionKind.ESTIMATE_STABILITY_SIGNAL, "Estimate stability signal as cheap proxy before thermostability assay.")
+        return _empty(
+            ActionKind.ESTIMATE_STABILITY_SIGNAL,
+            "Estimate stability signal as cheap proxy before thermostability assay.",
+        )
 
     if action_kind == "run_hydrolysis_assay":
         return BioMedAction(
@@ -910,13 +919,21 @@ def make_heuristic_action(
         )
 
     if action_kind == "run_thermostability_assay":
-        return _empty(ActionKind.RUN_THERMOSTABILITY_ASSAY, "Assess enzyme thermostability under operating conditions.")
+        return _empty(
+            ActionKind.RUN_THERMOSTABILITY_ASSAY,
+            "Assess enzyme thermostability under operating conditions.",
+        )
 
     if action_kind == "test_pretreatment":
-        return _empty(ActionKind.TEST_PRETREATMENT, "Test whether pretreatment meaningfully improves accessibility.")
+        return _empty(
+            ActionKind.TEST_PRETREATMENT,
+            "Test whether pretreatment meaningfully improves accessibility.",
+        )
 
     if action_kind == "test_cocktail":
-        return _empty(ActionKind.TEST_COCKTAIL, "Test cocktail synergy to evaluate multi-enzyme route.")
+        return _empty(
+            ActionKind.TEST_COCKTAIL, "Test cocktail synergy to evaluate multi-enzyme route."
+        )
 
     if action_kind == "ask_expert":
         return BioMedAction(
@@ -1266,9 +1283,9 @@ def _run_short_plan_grpo(_config: BioMedUnslothConfig, _out_dir: Path) -> None:
     raise NotImplementedError(
         "short_plan_grpo is not yet implemented.\n\n"
         "When implemented:\n"
-        "  1. Model outputs {\"actions\": [{...}, {...}, ...]}\n"
+        '  1. Model outputs {"actions": [{...}, {...}, ...]}\n'
         "  2. Reward: reset env, replay history, apply each generated action, sum rewards.\n"
-        "  3. safe_parse_action will route {\"actions\":[...]} to score_plan() here.\n\n"
+        '  3. safe_parse_action will route {"actions":[...]} to score_plan() here.\n\n'
         "Start with full_action_grpo first."
     )
 

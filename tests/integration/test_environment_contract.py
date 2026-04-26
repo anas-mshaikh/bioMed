@@ -24,6 +24,20 @@ def test_reset_step_state_roundtrip_is_canonical(fresh_env) -> None:
     assert all(spec.action_kind in ActionKind for spec in result.observation.legal_next_actions)
 
 
+def test_estimate_stability_signal_builds_strict_public_observation(fresh_env) -> None:
+    fresh_env.reset(seed=7, scenario_family="thermostability_bottleneck", difficulty="easy")
+    fresh_env.step(BioMedAction(action_kind=ActionKind.INSPECT_FEEDSTOCK))
+    fresh_env.step(BioMedAction(action_kind=ActionKind.QUERY_CANDIDATE_REGISTRY))
+
+    result = fresh_env.step(BioMedAction(action_kind=ActionKind.ESTIMATE_STABILITY_SIGNAL))
+    latest_output = result.observation.latest_output
+
+    assert latest_output is not None
+    assert latest_output.output_type == "candidate_registry"
+    assert latest_output.data["stability_signal_score"] is not None
+    assert latest_output.data["screening_context"] == "candidate registry stability screen"
+
+
 def test_same_seed_and_actions_yield_same_outcome() -> None:
     actions = [
         BioMedAction(action_kind=ActionKind.INSPECT_FEEDSTOCK),

@@ -65,11 +65,22 @@ class InspectionOutputData(StrictModel):
 class CandidateRegistryOutputData(StrictModel):
     shortlist_size: int | None = None
     top_candidates: list[CandidateSummary] = Field(default_factory=list)
+    stability_signal_score: float | None = None
+    stability_signal_band: str | None = None
+    screening_context: str | None = None
 
     @model_validator(mode="after")
     def validate_presence(self) -> "CandidateRegistryOutputData":
-        if self.shortlist_size is None and not self.top_candidates:
-            raise ValueError("candidate registry payload must contain shortlist data")
+        if not any(
+            value is not None
+            for value in (
+                self.shortlist_size,
+                self.stability_signal_score,
+                self.stability_signal_band,
+                self.screening_context,
+            )
+        ) and not self.top_candidates:
+            raise ValueError("candidate registry payload must contain shortlist or signal data")
         return self
 
 

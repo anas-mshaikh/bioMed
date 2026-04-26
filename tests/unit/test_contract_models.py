@@ -10,6 +10,7 @@ from biomed_models import (
     Difficulty,
     ExpertId,
     InterventionFamily,
+    CandidateRegistryOutputData,
     REWARD_COMPONENT_KEYS,
     SCHEMA_VERSION,
     ScenarioFamily,
@@ -71,6 +72,19 @@ def test_public_models_are_strict_and_versioned() -> None:
 
 def test_reward_keys_are_owned_by_contract() -> None:
     assert REWARD_COMPONENT_KEYS == tuple(item.value for item in RewardKey)
+
+
+def test_candidate_registry_payload_accepts_stability_signal_screen() -> None:
+    payload = CandidateRegistryOutputData.model_validate(
+        {
+            "stability_signal_score": 0.7208,
+            "stability_signal_band": "medium",
+            "screening_context": "candidate registry stability screen",
+        }
+    )
+
+    assert payload.stability_signal_score == 0.7208
+    assert payload.stability_signal_band == "medium"
 
 
 def test_simulator_imports_canonical_vocabulary_objects() -> None:
