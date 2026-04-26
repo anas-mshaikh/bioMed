@@ -15,243 +15,573 @@ tags:
   - reinforcement-learning
   - science
 ---
+
 # BioMed
 
-**A trainable, partially observable environment for scientific program planning** — not a Q&A wrapper. The agent is a PET bioremediation program lead: it operates under real **budget and time** constraints, queries noisy instruments and experts, and must **diagnose hidden bottlenecks** before committing to an intervention. Success is scored by **process quality** (legality, ordering, information gain, efficiency) and by **final recommendation** correctness, aligned with the [OpenEnv](https://huggingface.co/docs/openenv) model of **shareable, gym-style** `reset` / `step` / `state` agents.
+[![OpenEnv](https://img.shields.io/badge/OpenEnv-compatible-0b7285)](https://huggingface.co/docs/openenv)
+![Schema](https://img.shields.io/badge/schema-biomed__v2-2f9e44)
+![Domain](https://img.shields.io/badge/domain-PET%20bioremediation-12b886)
+![State](https://img.shields.io/badge/state-hidden%20POMDP-f08c00)
+![UI](https://img.shields.io/badge/judge%20cockpit-%2Fui-1971c2)
+![Python](https://img.shields.io/badge/python-3.10%2B-495057)
 
-> **OpenEnv is the product.** This repo is an environment artifact: typed contracts, a rule engine, a latent simulator, decomposed rewards, a FastAPI + WebSocket server, and evaluation/replay tooling so judges and the community can **run, test, and extend** the benchmark — not just read a demo script.
+**BioMed is an OpenEnv-native benchmark for PET bioremediation experiment planning under hidden biological state.**
+
+The agent acts as a scientific program lead, not a chatbot. It must spend limited budget and time, inspect PET feedstock, gather noisy evidence, query simulated experts, run assays, diagnose the hidden bottleneck, and submit a structured final recommendation. The environment rewards scientifically valid workflow behavior and final decision quality through a decomposed reward signal.
+
+BioMed is built to be judged as a benchmark artifact:
+
+- **OpenEnv control loop:** typed `reset`, `step`, and `state` interactions.
+- **Strict public contract:** canonical `biomed_v2` action, observation, state, reward, and metric schemas.
+- **Hidden-state simulator:** latent PET substrate, intervention, assay noise, expert bias, and episode economics.
+- **Deterministic episodes:** same seed, scenario, difficulty, and actions produce reproducible trajectories.
+- **Training-ready substrate:** baselines, rollout collection, replay rendering, evaluation metrics, and optional GRPO training.
+- **Judge cockpit:** browser UI for live demo, replay inspection, reward breakdowns, and explicitly gated hidden-truth debug mode.
+
+> BioMed is not a generic app and not a wet-lab automation platform. It is a PET-only, hidden-state, long-horizon OpenEnv benchmark for evaluating scientific planning agents.
 
 ---
 
-## Why judges should care
+## Why This Benchmark Matters
 
-| Dimension | What BioMed demonstrates |
-|----------|----------------------------|
-| **Environment-first** | Gymnasium-style interaction; agents act through structured `BioMedAction`, not free-form chat. |
-| **Partial observability (POMDP)** | True scenario family, noise, and expert belief live in **latent** state; observations are **evidence and artifacts** only. |
-| **Actionable science** | 14 action kinds: inspection, literature/registry, characterization, assays, experts, hypothesis, finalization. |
-| **Reproducibility** | Same **seed** + scenario family + difficulty yields the same episode draw for fair comparison. |
-| **Extensibility** | Clear layers: `biomed_models/` (public contract) → `server/simulator/`, `server/rules/`, `server/rewards/` → `training/`. |
+Most science-agent demos reward fluent explanations. BioMed rewards **decision quality under partial observability**.
+
+In each episode, the agent sees only public observations: artifacts, warnings, expert messages, legal actions, resources, and noisy assay outputs. The ground truth remains server-side. A strong policy must infer whether the real bottleneck is substrate accessibility, thermostability, contamination artifact, cocktail synergy, route mismatch, or a true no-go case.
+
+| Benchmark dimension | BioMed implementation |
+| --- | --- |
+| **POMDP structure** | Hidden scenario truth and noisy outputs are separated from visible state. |
+| **Typed action space** | Agents submit canonical `BioMedAction` objects, not free-form prose. |
+| **Scientific workflow** | Inspection, characterization, registry search, assays, experts, hypotheses, final recommendation. |
+| **Reward decomposition** | Validity, ordering, information gain, efficiency, novelty, expert management, penalties, shaping, terminal quality. |
+| **Evaluation integrity** | Public trajectories stay truth-clean; private truth sidecars enable offline benchmark metrics. |
+| **Judge legibility** | Static UI cockpit explains resources, evidence, reward history, violations, uncertainty, and debug-only hidden truth. |
 
 ---
 
-## Environment at a glance
+## Visual Snapshot
+
+### What The Agent Is Trying To Do
 
 ```mermaid
 flowchart LR
-  subgraph public [What the agent sees]
-    Obs["BioMedObservation: stage, resources, legal_next_actions, artifacts, warnings, latest_output, expert_inbox"]
-  end
-  subgraph server [OpenEnv server]
-    Rules["Rule engine: hard/soft legality, prerequisites"]
-    Sim["Transition engine: latent PET scenario, costs, effects"]
-    Rew["Step + terminal reward engines"]
-  end
-  subgraph latent [Hidden, never leaked in observations]
-    Truth["Substrate and intervention truth, noise, expert beliefs"]
-  end
-  Action["BioMedAction"] --> Rules
-  Rules --> Sim
-  Sim --> Rew
-  Sim --> Obs
-  Truth --> Sim
+  A["PET feedstock<br/>unknown accessibility"] --> B["Gather evidence<br/>inspection, literature, registry"]
+  B --> C["Run targeted assays<br/>hydrolysis, stability, pretreatment, cocktail"]
+  C --> D["Diagnose bottleneck<br/>accessibility, stability, contamination, no-go"]
+  D --> E["Finalize recommendation<br/>route + stop/go + evidence"]
 ```
 
-- **`openenv.yaml`** — manifest: name `bioMed`, FastAPI app `server.app:app`, port `8000`.
-- **`server/bioMed_environment.py`** — local `BioMedEnvironment`: validation → transition → reward → observation.
-- **`server/app.py`** — HTTP + WebSocket surface for remote agents and UIs.
+### Public vs Hidden Boundary
+
+```mermaid
+flowchart TB
+  subgraph Public["PUBLIC CONTRACT: visible to agent, rollout, replay"]
+    P1["BioMedObservation"]
+    P2["Visible resources"]
+    P3["Latest output + artifacts"]
+    P4["Legal next ActionSpec list"]
+    P5["Warnings and rule violations"]
+  end
+
+  subgraph Private["SERVER-ONLY TRUTH: never in normal observation/state"]
+    H1["Scenario family draw"]
+    H2["PET crystallinity and contamination truth"]
+    H3["Best intervention family"]
+    H4["Assay noise and artifact risk"]
+    H5["Expert bias/confidence internals"]
+  end
+
+  Private --> Simulator["Simulator + Reward Engines"]
+  Public --> Agent["Agent / Policy"]
+  Agent --> Action["Strict BioMedAction"]
+  Action --> Simulator
+  Simulator --> Public
+```
+
+### PET Workflow Map
+
+```mermaid
+flowchart LR
+  I["1 Feedstock Intake<br/>inspect_feedstock"] --> C["2 Characterization<br/>crystallinity, contamination, particle size"]
+  C --> L["3 Evidence Search<br/>literature + candidate registry"]
+  L --> A["4 Assay Bench<br/>hydrolysis"]
+  A --> S["5 Stability Chamber<br/>thermostability"]
+  A --> P["6 Pretreatment Bench<br/>test_pretreatment"]
+  A --> K["7 Cocktail Testing<br/>test_cocktail"]
+  S --> X["8 Expert Review<br/>ask_expert + hypothesis"]
+  P --> X
+  K --> X
+  X --> F["9 Final Board<br/>finalize_recommendation"]
+```
+
+### Reward Stack
+
+```mermaid
+flowchart TB
+  R["Step reward"] --> V["validity"]
+  R --> O["ordering"]
+  R --> G["info_gain"]
+  R --> E["efficiency"]
+  R --> N["novelty"]
+  R --> M["expert_management"]
+  R --> Pn["penalty"]
+  R --> Sh["shaping"]
+  T["Terminal reward"] --> Q["structured final recommendation quality"]
+  T --> NG["no-finalization penalty on resource/step termination"]
+```
 
 ---
 
-## Task families (what “good” looks like)
+## The Core Loop
 
-1. **Candidate ranking** — registry and assays inform route choice without oracle leaks.  
-2. **Bottleneck diagnosis** — substrate access, thermostability, contamination artifacts, synergy, or economic **no-go**.  
-3. **Final recommendation** — structured `finalize_recommendation` with family, bottleneck, stop/go, and cited evidence.
+```mermaid
+flowchart LR
+  Agent["Agent / Policy"] --> Action["BioMedAction<br/>schema_version=biomed_v2"]
+  Action --> Rules["Rule Engine<br/>hard + soft constraints"]
+  Rules --> Transition["Transition Engine<br/>costs, outputs, milestones"]
+  Transition --> Reward["Reward Engines<br/>step + terminal"]
+  Reward --> Observation["BioMedObservation<br/>visible evidence only"]
+  Observation --> Agent
 
-Scenario families (see `server/simulator/scenarios.py`): `high_crystallinity`, `contamination_artifact`, `thermostability_bottleneck`, `no_go` (a real family, not only a label).
+  Latent["Hidden Simulator Truth<br/>PET substrate, route truth, noise, experts"] --> Transition
+  Latent --> Reward
+  Transition --> Recorder["Episode Recorder<br/>truth-clean replay"]
+  Recorder --> UI["Judge Cockpit<br/>visible mode + gated debug"]
+```
+
+One step follows this order:
+
+1. Validate the submitted `BioMedAction`.
+2. Check scientific and resource legality.
+3. Apply costs and transition hidden simulator state.
+4. Generate a noisy public output artifact.
+5. Compute decomposed step reward.
+6. Add terminal reward if the episode ended.
+7. Return the next public observation.
+8. Record a truth-clean snapshot for replay and UI.
 
 ---
 
-## Action surface (summary)
+## Domain Model
 
-Full contract: `biomed_models/contract.py` — `BioMedAction` and parameter models.
+BioMed is PET-only by design.
 
-| Track | Kinds |
-|------|--------|
-| Intake / triage | `inspect_feedstock`, `query_literature`, `query_candidate_registry` |
-| Characterization | `measure_crystallinity`, `measure_contamination`, `estimate_particle_size` |
-| Route screens | `estimate_stability_signal`, `run_hydrolysis_assay`, `run_thermostability_assay`, `test_pretreatment`, `test_cocktail` |
-| Judgment | `ask_expert`, `state_hypothesis`, `finalize_recommendation` |
+PET remediation is difficult because enzymatic degradation depends on substrate accessibility, crystallinity, contamination, temperature stability, catalyst fit, route economics, and noisy evidence. BioMed turns that uncertainty into an interactive benchmark.
 
-`run_hydrolysis_assay` requires `candidate_family`. `ask_expert` requires `expert_id`. The rule engine enforces **workflow order** (e.g. crystallinity only after feedstock inspection; hydrolysis after sample + candidate context).
+### Canonical Scenario Families
+
+The current benchmark ships four canonical scenario families:
+
+| Scenario | What it tests |
+| --- | --- |
+| `high_crystallinity` | The hidden bottleneck is PET accessibility; pretreatment may matter more than enzyme swapping. |
+| `thermostability_bottleneck` | A promising route may fail under realistic operating temperature. |
+| `contamination_artifact` | Observed assay signal can be misleading because contamination distorts evidence. |
+| `no_go` | The best decision is to stop rather than burn budget on an uneconomic route. |
+
+### Canonical Intervention Families
+
+Final recommendations use intervention families, not scenario labels:
+
+| Family | Meaning |
+| --- | --- |
+| `pretreat_then_single` | Improve substrate accessibility before enzymatic treatment. |
+| `thermostable_single` | Favor a single robust catalyst route. |
+| `cocktail` | Use a multi-agent or multi-enzyme route. |
+| `no_go` | Stop because the evidence and economics do not support continuation. |
 
 ---
 
-## Quick start (judges & developers)
+## Public Contract
+
+The canonical public contract lives in `biomed_models/` and uses schema version `biomed_v2`.
+
+| Model layer | Purpose |
+| --- | --- |
+| `biomed_models/contract.py` | Canonical enums, schema version, reward keys, metrics, action costs, and legal vocabulary. |
+| `biomed_models/actions.py` | Strict `BioMedAction` model. |
+| `biomed_models/action_params.py` | Typed action-specific parameter models. |
+| `biomed_models/observation.py` | Public `BioMedObservation`, legal action specs, resources, and episode info. |
+| `biomed_models/state.py` | Visible-only operational state. |
+| `biomed_models/reward.py` | Canonical reward breakdown validation. |
+
+All canonical public models forbid extra fields. Old action names and loose payload shapes are not accepted as normal contract behavior.
+
+### Action Surface
+
+| Track | Canonical action kinds |
+| --- | --- |
+| Intake | `inspect_feedstock` |
+| Evidence search | `query_literature`, `query_candidate_registry` |
+| Sample characterization | `measure_crystallinity`, `measure_contamination`, `estimate_particle_size` |
+| Route screening | `estimate_stability_signal`, `run_hydrolysis_assay`, `run_thermostability_assay` |
+| Intervention testing | `test_pretreatment`, `test_cocktail` |
+| Expert and reasoning | `ask_expert`, `state_hypothesis` |
+| Terminal decision | `finalize_recommendation` |
+
+Examples of contract-enforced requirements:
+
+- `ask_expert` requires `parameters.expert_id`.
+- `run_hydrolysis_assay` requires `parameters.candidate_family`.
+- `finalize_recommendation` requires `bottleneck`, `recommended_family`, `decision_type`, `summary`, and evidence references.
+- `legal_next_actions` returns rich `ActionSpec` objects, not ambiguous strings.
+
+---
+
+## Architecture
+
+```text
+bioMed/
+├── biomed_models/          # Canonical public schema and vocabulary
+├── server/
+│   ├── app.py              # FastAPI/OpenEnv app and HTTP session handling
+│   ├── bioMed_environment.py
+│   ├── rules/              # Legality and workflow constraints
+│   ├── simulator/          # Hidden latent state, scenarios, transitions, observations
+│   ├── rewards/            # Step reward, terminal reward, shaping, config
+│   └── ui/                 # Judge cockpit recorder, store, serializers, static UI
+├── training/               # Baselines, parsing, rollouts, replay, evaluation, GRPO harness
+├── tests/                  # Unit, contract, integration, API, and e2e tests
+├── openenv.yaml            # OpenEnv manifest
+└── pyproject.toml
+```
+
+The environment is intentionally layered:
+
+- **Public model layer:** strict, typed, visible-only benchmark contract.
+- **Hidden simulator layer:** PET truth, scenario sampling, stochastic outputs, and internal milestones.
+- **Rules layer:** hard blocks and soft scientific warnings.
+- **Reward layer:** decomposed step and terminal scoring.
+- **Training/evaluation layer:** canonical action parsing, baselines, rollout collection, replay, and metrics.
+- **UI layer:** downstream visualization over recorded snapshots, never a second source of simulator truth.
+
+---
+
+## Quick Start
 
 ### Install
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-### Verify the environment package
+### Validate
 
 ```bash
 openenv validate
-python3 -m pytest tests/unit tests/integration -q
+python3 -m pytest tests/unit tests/contract tests/integration -q
 python3 -m pytest tests/api tests/e2e -q
 ```
 
-### Run the server
+### Run The Server
 
 ```bash
 uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
-# or: python -m uvicorn server.app:app --host 0.0.0.0 --port 8000
 ```
 
-### Judge cockpit (UI)
+OpenEnv manifest:
 
-Open:
-
-```text
-http://localhost:8000/ui
+```yaml
+name: bioMed
+runtime: fastapi
+app: server.app:app
+port: 8000
 ```
 
-Optional truth-aware debug (local only, not for blind eval):
+Core routes:
 
-```bash
-BIOMED_UI_DEBUG=true uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
-```
+| Route | Purpose |
+| --- | --- |
+| `GET /schema` | Canonical reset/action/observation/state schemas. |
+| `POST /reset` | Reset the current HTTP session environment. |
+| `POST /step` | Apply one canonical `BioMedAction`. |
+| `GET /state` | Return visible-only state. |
+| `GET /ui` | Serve the judge cockpit. |
 
-### Typed client (OpenEnv)
+---
 
-After `pip install -e .`, use the shipped client and models (re-exported from `biomed_models`):
+## Python Client Example
 
 ```python
 from client import BioMedEnv
 from models import ActionKind, BioMedAction
 
 env = BioMedEnv(base_url="http://localhost:8000")
-env.sync().reset(seed=7)
-result = env.sync().step(
+client = env.sync()
+
+client.reset(seed=7, scenario_family="high_crystallinity", difficulty="easy")
+
+result = client.step(
     BioMedAction(
         action_kind=ActionKind.INSPECT_FEEDSTOCK,
-        rationale="Triage",
-        confidence=0.5,
+        rationale="Start with feedstock triage before choosing assays.",
+        confidence=0.60,
     )
 )
+
 print(result.observation.stage)
+print(result.reward)
+
 env.close()
 ```
 
-(`from biomed_models import ActionKind, BioMedAction` is equivalent to `from models import …` here.)
-
-The **stateful** path for benchmarks is the **WebSocket** + typed client; HTTP `/reset`, `/step`, `/state` are documented for health, schema, and simple control.
+The canonical model package is `biomed_models`. The root `models.py` module re-exports the same public contract for simple examples.
 
 ---
 
-## Rollouts, replay, and evaluation
+## Judge Cockpit
 
-```bash
-python3 -m training.rollout_collection --policy cost_aware_heuristic --episodes 8 --output-dir outputs
+BioMed includes a static judge/demo UI. It is a cockpit over the benchmark, not the benchmark itself.
+
+Start the server and open:
+
+```text
+http://localhost:8000/ui
 ```
 
+The cockpit shows:
+
+- Current scenario, difficulty, stage, status, step count, budget, and time.
+- PET workflow stations and active action location.
+- Legal next actions and current action rationale.
+- Latest output, artifacts, expert messages, discoveries, warnings, and violations.
+- Step reward, cumulative reward, reward history, and component breakdown.
+- Replay export as JSON or Markdown.
+- Optional hidden-truth judge panel when debug mode is explicitly enabled.
+
+Debug mode is off by default:
+
 ```bash
-python3 -m training.replay --input outputs/rollouts/cost_aware_heuristic.jsonl \
+BIOMED_UI_DEBUG=true uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
+```
+
+When debug mode is disabled, hidden truth is redacted to preserve the POMDP boundary. Normal observations, visible state, public rollouts, and public replay exports must remain truth-clean.
+
+---
+
+## Reward Design
+
+BioMed reward is decomposed so policies can be debugged and compared.
+
+| Component | What it measures |
+| --- | --- |
+| `validity` | Whether the action is legal and executable. |
+| `ordering` | Whether the action fits the current scientific workflow stage. |
+| `info_gain` | Whether the action produced useful uncertainty-reducing evidence. |
+| `efficiency` | Whether the policy used budget and time responsibly. |
+| `novelty` | Whether the action avoids redundant low-value repetition. |
+| `expert_management` | Whether expert consultations are useful and followed appropriately. |
+| `penalty` | Invalid, premature, redundant, or wasteful behavior. |
+| `shaping` | Potential-based progress over benchmark milestones. |
+| `terminal` | Final recommendation quality or no-finalization penalty. |
+
+Terminal quality evaluates structured fields, not prose alone:
+
+- predicted bottleneck,
+- recommended intervention family,
+- stop/go decision,
+- evidence references,
+- confidence calibration,
+- resource-aware finalization timing.
+
+---
+
+## Rollouts, Replay, And Evaluation
+
+Collect public rollouts:
+
+```bash
+python3 -m training.rollout_collection \
+  --policy cost_aware_heuristic \
+  --episodes 8 \
+  --output-dir outputs
+```
+
+Collect benchmark rollouts with private truth sidecar:
+
+```bash
+python3 -m training.rollout_collection \
+  --policy cost_aware_heuristic \
+  --episodes 8 \
+  --capture-latent-truth \
+  --require-benchmark-metrics \
+  --output-dir outputs
+```
+
+Render replay Markdown:
+
+```bash
+python3 -m training.replay \
+  --input outputs/rollouts/cost_aware_heuristic.jsonl \
   --truth-sidecar outputs/private_truth/cost_aware_heuristic_truth.json \
   --output outputs/replays/cost_aware_heuristic.md
 ```
 
+Evaluate:
+
 ```bash
-python3 -m training.evaluation --input outputs/rollouts/cost_aware_heuristic.jsonl \
+python3 -m training.evaluation \
+  --input outputs/rollouts/cost_aware_heuristic.jsonl \
   --truth-sidecar outputs/private_truth/cost_aware_heuristic_truth.json
 ```
 
-Public rollout JSONL stays **truth-clean**; benchmark-side truth for offline scoring is in a **private sidecar**.
+Built-in baseline policies:
+
+| Policy | Purpose |
+| --- | --- |
+| `random_legal` | Samples legal actions to test contract and exploration floor. |
+| `characterize_first` | Prioritizes sample characterization before route testing. |
+| `cost_aware_heuristic` | Balances evidence gathering with budget/time pressure. |
+| `expert_augmented_heuristic` | Uses expert messages as part of workflow planning. |
 
 ---
 
-## Training (optional) — Unsloth GRPO
+## Metrics
 
-Install train extras: `pip install -e ".[train]"` and follow `requirements-unsloth.txt` if using Unsloth. Reward in full-action mode is **state-dependent** from the same `BioMedEnvironment` logic as the server, plus a small **format bonus** for valid JSON (see `training/training_unsloth.py`).
+BioMed reports online metrics and offline benchmark metrics.
 
-| Mode | Role |
-|------|------|
-| `single_action_curriculum` | Narrow action set, sanity / format gate |
-| `full_action_grpo` | Full 14 action kinds, state-dependent reward |
+Online metrics work from public trajectory data:
 
-**Curriculum smoke**
+- mean return,
+- median return,
+- return standard deviation,
+- mean episode length,
+- success rate when success is known,
+- success-known fraction.
+
+Benchmark metrics require private truth sidecars:
+
+- workflow hard-validity rate,
+- workflow soft-validity rate,
+- ordering score,
+- action diversity,
+- mean conclusion confidence,
+- bottleneck accuracy,
+- intervention family accuracy,
+- stop/go accuracy,
+- information gain per cost,
+- expert usefulness score,
+- hard and soft violation step rates,
+- finalization rate.
+
+If truth is unavailable, benchmark metrics fail closed instead of silently pretending success is known.
+
+---
+
+## Optional Training: Unsloth GRPO
+
+Install training extras:
+
+```bash
+pip install -e ".[train]"
+```
+
+Curriculum smoke run:
 
 ```bash
 python -m training.training_unsloth \
   --training-mode single_action_curriculum \
   --model-id Qwen/Qwen3-0.6B \
-  --dataset-episodes 32 --rollout-steps 3 --trainer-max-steps 120 \
-  --num-generations 4 --max-seq-length 1024 --lora-r 8 --lora-alpha 16 \
+  --dataset-episodes 32 \
+  --rollout-steps 3 \
+  --trainer-max-steps 120 \
+  --num-generations 4 \
+  --max-seq-length 1024 \
+  --lora-r 8 \
+  --lora-alpha 16 \
   --gradient-accumulation-steps 2 \
   --output-dir outputs/training/curriculum_smoke_120
 ```
 
-**Full-action GRPO (main)**
+Full-action GRPO run:
 
 ```bash
 python -m training.training_unsloth \
   --training-mode full_action_grpo \
   --model-id Qwen/Qwen3-0.6B \
-  --dataset-episodes 64 --rollout-steps 5 --trainer-max-steps 150 \
-  --num-generations 4 --max-seq-length 1536 --max-prompt-length 1024 \
-  --lora-r 8 --lora-alpha 16 --gradient-accumulation-steps 2 \
+  --dataset-episodes 64 \
+  --rollout-steps 5 \
+  --trainer-max-steps 150 \
+  --num-generations 4 \
+  --max-seq-length 1536 \
+  --max-prompt-length 1024 \
+  --lora-r 8 \
+  --lora-alpha 16 \
+  --gradient-accumulation-steps 2 \
   --collection-policy mixed \
   --output-dir outputs/training/full_action_smoke_150
 ```
 
-**Evaluate a saved LoRA**
+Evaluate a saved LoRA:
 
 ```bash
 python -m training.evaluate_policy \
   --model-dir outputs/training/full_action_smoke_150 \
   --output-dir outputs/training/full_action_smoke_150/eval \
-  --eval-episodes 64 --heldout-seed-offset 10000
+  --eval-episodes 64 \
+  --heldout-seed-offset 10000
 ```
+
+Training is optional. The benchmark artifact is the environment contract, simulator, reward, evaluator, and replay system.
 
 ---
 
-## Docker & Hugging Face Spaces
+## Docker And OpenEnv Packaging
+
+Build locally:
 
 ```bash
 docker build -f server/Dockerfile -t biomed-env:latest .
 ```
 
+Push through OpenEnv tooling:
+
 ```bash
 openenv push
 ```
 
-Exposed routes include `GET /health`, `GET /schema`, stateful control, and `WebSocket` for the benchmark path.
+The Docker image serves the FastAPI app declared in `openenv.yaml`.
 
 ---
 
-## Project layout
+## Test Pyramid
 
-```text
-bioMed/
-├── openenv.yaml              # OpenEnv manifest
-├── biomed_models/            # Public Pydantic contracts + action/observation types
-├── server/                   # FastAPI app, BioMedEnvironment, simulator, rules, rewards, UI
-├── training/                 # Rollouts, replay, evaluation, baselines, Unsloth GRPO
-├── tests/                    # unit, integration, API, e2e
-└── pyproject.toml
+The test suite is organized around benchmark integrity:
+
+| Layer | What it protects |
+| --- | --- |
+| Unit | Strict model validation, reward semantics, scenario construction, UI serializers. |
+| Contract | Canonical action registry, metric schema, hidden-field bans, rule/reward/evaluator alignment. |
+| Integration | Reset/step/state roundtrips, deterministic rollouts, training alignment, UI recording. |
+| API | HTTP schema, OpenEnv endpoints, UI routes, debug redaction, replay export. |
+| E2E | Training surface and end-to-end benchmark flow. |
+
+Recommended full validation:
+
+```bash
+python3 -m pytest tests/unit tests/contract -q
+python3 -m pytest tests/integration tests/api -q
+python3 -m pytest tests/e2e -q
 ```
 
 ---
 
-## Notes for reviewers
+## Reviewer Notes
 
-- Judge the **environment contract** first: legality, partial observability, and reward design — training weights are an optional layer.  
-- Same-seed episodes and hidden-state evaluation are first-class.  
-- For a deeper narrative, see [BioMed_blog.md](BioMed_blog.md).  
+When reviewing BioMed, judge the environment spine first:
 
-**BioMed** — *science as interaction, not as a paragraph.*
+- Does the agent interact through a strict typed action contract?
+- Are hidden simulator variables separated from public observation and state?
+- Do rules, rewards, evaluation, replay, and training use the same vocabulary?
+- Are terminal decisions scored from structured fields rather than rationale text?
+- Are seeded episodes deterministic?
+- Are public rollouts truth-clean?
+- Does the UI explain the benchmark without becoming the benchmark?
+
+The intended 30-second takeaway:
+
+> BioMed is a hidden-state PET bioremediation planning environment where an agent spends limited resources, gathers noisy scientific evidence, consults experts, and is rewarded for making a calibrated final remediation or no-go decision.
+
+For narrative context, see [BioMed_blog.md](BioMed_blog.md).
