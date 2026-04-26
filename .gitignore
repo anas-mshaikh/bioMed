@@ -10,3 +10,4 @@ outputs/evals/*
 .env
 outputs/
 bioMed.egg-info/
+.DS_Store

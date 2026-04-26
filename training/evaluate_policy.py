@@ -51,7 +51,7 @@ class TrainedModelPolicy(BasePolicy):
         model: Any,
         tokenizer: Any,
         *,
-        max_new_tokens: int = 256,
+        max_new_tokens: int = 1024,
         temperature: float = 0.7,
         device: str | None = None,
     ) -> None:

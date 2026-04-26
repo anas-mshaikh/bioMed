@@ -1,104 +1,119 @@
 ---
-otitle: BioMed Benchmark Server
+title: BioMed | OpenEnv PET bioremediation benchmark
 emoji: 🧪
-colorTo: green
+colorFrom: green
+colorTo: blue
 sdk: docker
 pinned: false
 app_port: 8000
 base_path: /web
 tags:
   - openenv
+  - huggingface
+  - environment
   - benchmark
   - reinforcement-learning
+  - science
 ---
 # BioMed
 
-BioMed is an OpenEnv benchmark for hidden-state PET bioremediation planning. The agent acts as a program lead under budget and time limits, gathers evidence through assays and expert consultations, and must submit a final program recommendation with the right intervention family, bottleneck diagnosis, and stop/go decision.
+**A trainable, partially observable environment for scientific program planning** — not a Q&A wrapper. The agent is a PET bioremediation program lead: it operates under real **budget and time** constraints, queries noisy instruments and experts, and must **diagnose hidden bottlenecks** before committing to an intervention. Success is scored by **process quality** (legality, ordering, information gain, efficiency) and by **final recommendation** correctness, aligned with the [OpenEnv](https://huggingface.co/docs/openenv) model of **shareable, gym-style** `reset` / `step` / `state` agents.
 
-This repository is not just a demo app. It contains:
+> **OpenEnv is the product.** This repo is an environment artifact: typed contracts, a rule engine, a latent simulator, decomposed rewards, a FastAPI + WebSocket server, and evaluation/replay tooling so judges and the community can **run, test, and extend** the benchmark — not just read a demo script.
 
-- an OpenEnv-compatible server in [server/app.py](server/app.py)
-- a hidden-state simulator and rule engine under [server/](server)
-- reward, rollout, replay, and evaluation utilities under [training/](training)
+---
 
-## Benchmark shape
+## Why judges should care
 
-### Partial observability
+| Dimension | What BioMed demonstrates |
+|----------|----------------------------|
+| **Environment-first** | Gymnasium-style interaction; agents act through structured `BioMedAction`, not free-form chat. |
+| **Partial observability (POMDP)** | True scenario family, noise, and expert belief live in **latent** state; observations are **evidence and artifacts** only. |
+| **Actionable science** | 14 action kinds: inspection, literature/registry, characterization, assays, experts, hypothesis, finalization. |
+| **Reproducibility** | Same **seed** + scenario family + difficulty yields the same episode draw for fair comparison. |
+| **Extensibility** | Clear layers: `biomed_models/` (public contract) → `server/simulator/`, `server/rules/`, `server/rewards/` → `training/`. |
 
-The hidden truth includes scenario family, intervention-family viability, bottleneck cause, assay noise, and expert belief state. Public observations are intentionally limited to visible assay outputs, artifacts, warnings, and resource state.
+---
 
-### Scenario families
+## Environment at a glance
 
-Current scenario families are generated in [server/simulator/scenarios.py](server/simulator/scenarios.py):
+```mermaid
+flowchart LR
+  subgraph public [What the agent sees]
+    Obs["BioMedObservation: stage, resources, legal_next_actions, artifacts, warnings, latest_output, expert_inbox"]
+  end
+  subgraph server [OpenEnv server]
+    Rules["Rule engine: hard/soft legality, prerequisites"]
+    Sim["Transition engine: latent PET scenario, costs, effects"]
+    Rew["Step + terminal reward engines"]
+  end
+  subgraph latent [Hidden, never leaked in observations]
+    Truth["Substrate and intervention truth, noise, expert beliefs"]
+  end
+  Action["BioMedAction"] --> Rules
+  Rules --> Sim
+  Sim --> Rew
+  Sim --> Obs
+  Truth --> Sim
+```
 
-- `high_crystallinity`
-- `contamination_artifact`
-- `thermostability_bottleneck`
-- `no_go`
+- **`openenv.yaml`** — manifest: name `bioMed`, FastAPI app `server.app:app`, port `8000`.
+- **`server/bioMed_environment.py`** — local `BioMedEnvironment`: validation → transition → reward → observation.
+- **`server/app.py`** — HTTP + WebSocket surface for remote agents and UIs.
 
-`no_go` is a true scenario family, not just a terminal label.
+---
 
-### Action surface
+## Task families (what “good” looks like)
 
-The public action model is [biomed_models/contract.py](biomed_models/contract.py) `::BioMedAction`. Key action kinds include:
+1. **Candidate ranking** — registry and assays inform route choice without oracle leaks.  
+2. **Bottleneck diagnosis** — substrate access, thermostability, contamination artifacts, synergy, or economic **no-go**.  
+3. **Final recommendation** — structured `finalize_recommendation` with family, bottleneck, stop/go, and cited evidence.
 
-- intake and triage: `inspect_feedstock`, `query_literature`, `query_candidate_registry`
-- evidence gathering: `measure_crystallinity`, `measure_contamination`, `estimate_particle_size`, `estimate_stability_signal`
-- intervention tests: `run_hydrolysis_assay`, `run_thermostability_assay`, `test_pretreatment`, `test_cocktail`
-- expert and decision actions: `ask_expert`, `state_hypothesis`, `finalize_recommendation`
+Scenario families (see `server/simulator/scenarios.py`): `high_crystallinity`, `contamination_artifact`, `thermostability_bottleneck`, `no_go` (a real family, not only a label).
 
-`run_hydrolysis_assay` requires an explicit `candidate_family` parameter. `ask_expert` requires a top-level `expert_id`.
+---
 
-### Observation and state
+## Action surface (summary)
 
-- [biomed_models/observation.py](biomed_models/observation.py) `::BioMedObservation` is the visible agent observation returned from `reset()` and `step()`.
-- [biomed_models/state.py](biomed_models/state.py) `::BioMedVisibleState` is the visible state returned by `state()`.
-- Hidden latent truth is not part of the public environment contract.
+Full contract: `biomed_models/contract.py` — `BioMedAction` and parameter models.
 
-## Quick start
+| Track | Kinds |
+|------|--------|
+| Intake / triage | `inspect_feedstock`, `query_literature`, `query_candidate_registry` |
+| Characterization | `measure_crystallinity`, `measure_contamination`, `estimate_particle_size` |
+| Route screens | `estimate_stability_signal`, `run_hydrolysis_assay`, `run_thermostability_assay`, `test_pretreatment`, `test_cocktail` |
+| Judgment | `ask_expert`, `state_hypothesis`, `finalize_recommendation` |
+
+`run_hydrolysis_assay` requires `candidate_family`. `ask_expert` requires `expert_id`. The rule engine enforces **workflow order** (e.g. crystallinity only after feedstock inspection; hydrolysis after sample + candidate context).
+
+---
+
+## Quick start (judges & developers)
 
 ### Install
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
-### Judge path
-
-These are the minimum commands a reviewer should be able to run:
+### Verify the environment package
 
 ```bash
+openenv validate
 python3 -m pytest tests/unit tests/integration -q
 python3 -m pytest tests/api tests/e2e -q
-./.venv/bin/openenv validate
-uvicorn server.app:app --reload
 ```
 
-## Running locally
-
-Start the OpenEnv server:
+### Run the server
 
 ```bash
 uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
+# or: python -m uvicorn server.app:app --host 0.0.0.0 --port 8000
 ```
 
-For stateful interactive use, prefer the WebSocket client path. HTTP endpoints remain available for health/schema/debug and simple control flows.
-
-Validate the manifest and server wiring:
-
-```bash
-./.venv/bin/openenv validate
-```
-
-## BioMed Judge Cockpit
-
-Start the server:
-
-```bash
-uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
-```
+### Judge cockpit (UI)
 
 Open:
 
@@ -106,168 +121,137 @@ Open:
 http://localhost:8000/ui
 ```
 
-Enable judge debug mode:
+Optional truth-aware debug (local only, not for blind eval):
 
 ```bash
 BIOMED_UI_DEBUG=true uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The cockpit is a demo view for the benchmark. Normal mode hides truth. Debug mode only works when the server debug flag is on. Public exports show visible replay only.
+### Typed client (OpenEnv)
 
-### Typed client
-
-The canonical import surface is:
+After `pip install -e .`, use the shipped client and models (re-exported from `biomed_models`):
 
 ```python
-from bioMed import BioMedAction, BioMedEnv
-
-env = BioMedEnv(base_url="http://localhost:8000")
-
-reset = env.sync().reset(seed=7)
-result = env.sync().step(
-    BioMedAction(action_kind="inspect_feedstock", parameters={})
-)
-print(result.observation.stage)
-env.close()
-```
-
-Example expert call:
-
-```python
-from bioMed import BioMedAction, BioMedEnv
+from client import BioMedEnv
+from models import ActionKind, BioMedAction
 
 env = BioMedEnv(base_url="http://localhost:8000")
 env.sync().reset(seed=7)
 result = env.sync().step(
     BioMedAction(
-        action_kind="ask_expert",
-        expert_id="wet_lab_lead",
-        parameters={},
+        action_kind=ActionKind.INSPECT_FEEDSTOCK,
+        rationale="Triage",
+        confidence=0.5,
     )
 )
-print(result.observation.latest_output.summary)
+print(result.observation.stage)
 env.close()
 ```
 
-## Rollout, replay, and evaluation
+(`from biomed_models import ActionKind, BioMedAction` is equivalent to `from models import …` here.)
 
-Collect scripted-policy rollouts:
+The **stateful** path for benchmarks is the **WebSocket** + typed client; HTTP `/reset`, `/step`, `/state` are documented for health, schema, and simple control.
+
+---
+
+## Rollouts, replay, and evaluation
 
 ```bash
 python3 -m training.rollout_collection --policy cost_aware_heuristic --episodes 8 --output-dir outputs
 ```
 
-Render replay markdown:
-
 ```bash
-python3 -m training.replay --input outputs/rollouts/cost_aware_heuristic.jsonl --truth-sidecar outputs/private_truth/cost_aware_heuristic_truth.json --output outputs/replays/cost_aware_heuristic.md
+python3 -m training.replay --input outputs/rollouts/cost_aware_heuristic.jsonl \
+  --truth-sidecar outputs/private_truth/cost_aware_heuristic_truth.json \
+  --output outputs/replays/cost_aware_heuristic.md
 ```
 
-Run benchmark evaluation on collected trajectories:
-
 ```bash
-python3 -m training.evaluation --input outputs/rollouts/cost_aware_heuristic.jsonl --truth-sidecar outputs/private_truth/cost_aware_heuristic_truth.json
+python3 -m training.evaluation --input outputs/rollouts/cost_aware_heuristic.jsonl \
+  --truth-sidecar outputs/private_truth/cost_aware_heuristic_truth.json
 ```
 
-Saved public rollout JSONL is truth-clean by default. Benchmark truth needed for offline evaluation is written to a private sidecar.
+Public rollout JSONL stays **truth-clean**; benchmark-side truth for offline scoring is in a **private sidecar**.
 
-## Testing
+---
 
-Test lanes:
+## Training (optional) — Unsloth GRPO
 
-- `tests/unit`: deterministic local invariants
-- `tests/integration`: environment loop, reward, rollout, and hidden-truth discipline
-- `tests/api`: real OpenEnv HTTP/WebSocket contract tests against the shipped app
-- `tests/e2e`: slower smoke tests, replay/demo checks, and Docker build validation
+Install train extras: `pip install -e ".[train]"` and follow `requirements-unsloth.txt` if using Unsloth. Reward in full-action mode is **state-dependent** from the same `BioMedEnvironment` logic as the server, plus a small **format bonus** for valid JSON (see `training/training_unsloth.py`).
 
-Run everything:
+| Mode | Role |
+|------|------|
+| `single_action_curriculum` | Narrow action set, sanity / format gate |
+| `full_action_grpo` | Full 14 action kinds, state-dependent reward |
+
+**Curriculum smoke**
 
 ```bash
-python3 -m pytest tests/unit tests/integration -q
-python3 -m pytest tests/api tests/e2e -q
+python -m training.training_unsloth \
+  --training-mode single_action_curriculum \
+  --model-id Qwen/Qwen3-0.6B \
+  --dataset-episodes 32 --rollout-steps 3 --trainer-max-steps 120 \
+  --num-generations 4 --max-seq-length 1024 --lora-r 8 --lora-alpha 16 \
+  --gradient-accumulation-steps 2 \
+  --output-dir outputs/training/curriculum_smoke_120
 ```
 
-## Docker and deployment
+**Full-action GRPO (main)**
 
-Build the server image:
+```bash
+python -m training.training_unsloth \
+  --training-mode full_action_grpo \
+  --model-id Qwen/Qwen3-0.6B \
+  --dataset-episodes 64 --rollout-steps 5 --trainer-max-steps 150 \
+  --num-generations 4 --max-seq-length 1536 --max-prompt-length 1024 \
+  --lora-r 8 --lora-alpha 16 --gradient-accumulation-steps 2 \
+  --collection-policy mixed \
+  --output-dir outputs/training/full_action_smoke_150
+```
+
+**Evaluate a saved LoRA**
+
+```bash
+python -m training.evaluate_policy \
+  --model-dir outputs/training/full_action_smoke_150 \
+  --output-dir outputs/training/full_action_smoke_150/eval \
+  --eval-episodes 64 --heldout-seed-offset 10000
+```
+
+---
+
+## Docker & Hugging Face Spaces
 
 ```bash
 docker build -f server/Dockerfile -t biomed-env:latest .
 ```
 
-OpenEnv manifest:
-
-- [openenv.yaml](openenv.yaml)
-
-Push to Hugging Face Spaces with the OpenEnv CLI:
-
 ```bash
 openenv push
 ```
 
-The Docker Space exposes:
+Exposed routes include `GET /health`, `GET /schema`, stateful control, and `WebSocket` for the benchmark path.
 
-- `/health`
-- `/schema`
-- `/reset`, `/step`, `/state`
-- `/ws`
+---
 
 ## Project layout
 
 ```text
 bioMed/
-├── biomed_models/           # Canonical public contract/model layer
-├── server/                  # Environment server, simulator, rules, rewards
-├── training/                # Rollouts, replay, evaluation, baselines
-├── tests/                   # Unit, integration, API, and e2e coverage
-├── openenv.yaml             # OpenEnv manifest
-└── pyproject.toml           # Packaging and dev tooling
+├── openenv.yaml              # OpenEnv manifest
+├── biomed_models/            # Public Pydantic contracts + action/observation types
+├── server/                   # FastAPI app, BioMedEnvironment, simulator, rules, rewards, UI
+├── training/                 # Rollouts, replay, evaluation, baselines, Unsloth GRPO
+├── tests/                    # unit, integration, API, e2e
+└── pyproject.toml
 ```
+
+---
 
 ## Notes for reviewers
 
-- The benchmark-grade stateful path is the WebSocket endpoint and typed client.
-- HTTP endpoints remain available and isolated, but they are documented as secondary/debug-safe rather than the main benchmark interaction mode.
-- The benchmark is designed for reproducible same-seed episodes and hidden-state evaluation.
-- Reward and evaluation tooling exist, but this repository should still be judged first as an environment artifact.
+- Judge the **environment contract** first: legality, partial observability, and reward design — training weights are an optional layer.  
+- Same-seed episodes and hidden-state evaluation are first-class.  
+- For a deeper narrative, see [BioMed_blog.md](BioMed_blog.md).  
 
-
-
-# Run 1 — Curriculum smoke (sanity gate)
-
-python -m training.training_unsloth 
-  --training-mode single_action_curriculum 
-  --model-id Qwen/Qwen3-0.6B 
-  --dataset-episodes 32 --rollout-steps 3 --trainer-max-steps 120 
-  --num-generations 4 --max-seq-length 1024 --lora-r 8 --lora-alpha 16 
-  --gradient-accumulation-steps 2 
-  --output-dir outputs/training/curriculum_smoke_120
-
-# Run 2 — Full-action smoke
-
-python -m training.training_unsloth 
-  --training-mode full_action_grpo 
-  --model-id Qwen/Qwen3-0.6B 
-  --dataset-episodes 64 --rollout-steps 5 --trainer-max-steps 150 
-  --num-generations 4 --max-seq-length 1536 --max-prompt-length 1024 
-  --lora-r 8 --lora-alpha 16 --gradient-accumulation-steps 2 
-  --collection-policy mixed 
-  --output-dir outputs/training/full_action_smoke_150
-
-# After Run 2 — evaluate
-
-python -m training.evaluate_policy 
-  --model-dir outputs/training/full_action_smoke_150 
-  --output-dir outputs/training/full_action_smoke_150/eval 
-  --eval-episodes 64 --heldout-seed-offset 10000
-
-# Run 3 — Main full-action run
-
-python -m training.training_unsloth
-  --training-mode full_action_grpo
-  --model-id Qwen/Qwen3-0.6B
-  --dataset-episodes 128 --rollout-steps 8 --trainer-max-steps 300
-  --num-generations 6 --max-seq-length 1536 --max-prompt-length 1024
-  --lora-r 16 --lora-alpha 32 --gradient-accumulation-steps 4
-  --collection-policy mixed
-  --output-dir outputs/training/full_action_300
+**BioMed** — *science as interaction, not as a paragraph.*
