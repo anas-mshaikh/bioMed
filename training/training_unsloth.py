@@ -80,8 +80,8 @@ class BioMedUnslothConfig:
     per_device_train_batch_size: int = 1
     gradient_accumulation_steps: int = 8
     num_generations: int = 4
-    max_prompt_length: int = 2048
-    max_completion_length: int = 2048
+    max_prompt_length: int = 4096
+    max_completion_length: int = 4096
     logging_steps: int = 1
     save_steps: int = 10
 
