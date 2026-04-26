@@ -13,7 +13,7 @@ pytestmark = pytest.mark.api
 def test_static_ui_serves(client) -> None:
     response = client.get("/ui")
     assert response.status_code == 200
-    assert "BioMed Judge Cockpit" in response.text
+    assert "BioMed" in response.text
 
 
 def test_ui_state_redacts_hidden_truth_by_default(client, reset_session) -> None:

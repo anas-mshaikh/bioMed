@@ -36,7 +36,7 @@ BioMed is built to be judged as a benchmark artifact:
 - **Hidden-state simulator:** latent PET substrate, intervention, assay noise, expert bias, and episode economics.
 - **Deterministic episodes:** same seed, scenario, difficulty, and actions produce reproducible trajectories.
 - **Training-ready substrate:** baselines, rollout collection, replay rendering, evaluation metrics, and optional GRPO training.
-- **Judge cockpit:** browser UI for live demo, replay inspection, reward breakdowns, and explicitly gated hidden-truth debug mode.
+- **Demo:** browser UI for live demo, replay inspection, reward breakdowns, and explicitly gated hidden-truth debug mode.
 
 > BioMed is not a generic app and not a wet-lab automation platform. It is a PET-only, hidden-state, long-horizon OpenEnv benchmark for evaluating scientific planning agents.
 
@@ -48,14 +48,14 @@ Most science-agent demos reward fluent explanations. BioMed rewards **decision q
 
 In each episode, the agent sees only public observations: artifacts, warnings, expert messages, legal actions, resources, and noisy assay outputs. The ground truth remains server-side. A strong policy must infer whether the real bottleneck is substrate accessibility, thermostability, contamination artifact, cocktail synergy, route mismatch, or a true no-go case.
 
-| Benchmark dimension | BioMed implementation |
-| --- | --- |
-| **POMDP structure** | Hidden scenario truth and noisy outputs are separated from visible state. |
-| **Typed action space** | Agents submit canonical `BioMedAction` objects, not free-form prose. |
-| **Scientific workflow** | Inspection, characterization, registry search, assays, experts, hypotheses, final recommendation. |
-| **Reward decomposition** | Validity, ordering, information gain, efficiency, novelty, expert management, penalties, shaping, terminal quality. |
-| **Evaluation integrity** | Public trajectories stay truth-clean; private truth sidecars enable offline benchmark metrics. |
-| **Judge legibility** | Static UI cockpit explains resources, evidence, reward history, violations, uncertainty, and debug-only hidden truth. |
+| Benchmark dimension      | BioMed implementation                                                                                                 |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| **POMDP structure**      | Hidden scenario truth and noisy outputs are separated from visible state.                                             |
+| **Typed action space**   | Agents submit canonical `BioMedAction` objects, not free-form prose.                                                  |
+| **Scientific workflow**  | Inspection, characterization, registry search, assays, experts, hypotheses, final recommendation.                     |
+| **Reward decomposition** | Validity, ordering, information gain, efficiency, novelty, expert management, penalties, shaping, terminal quality.   |
+| **Evaluation integrity** | Public trajectories stay truth-clean; private truth sidecars enable offline benchmark metrics.                        |
+| **Judge legibility**     | Static UI cockpit explains resources, evidence, reward history, violations, uncertainty, and debug-only hidden truth. |
 
 ---
 
@@ -146,7 +146,7 @@ flowchart LR
   Latent["Hidden Simulator Truth<br/>PET substrate, route truth, noise, experts"] --> Transition
   Latent --> Reward
   Transition --> Recorder["Episode Recorder<br/>truth-clean replay"]
-  Recorder --> UI["Judge Cockpit<br/>visible mode + gated debug"]
+  Recorder --> UI["Demo<br/>visible mode + gated debug"]
 ```
 
 One step follows this order:
@@ -172,23 +172,23 @@ PET remediation is difficult because enzymatic degradation depends on substrate 
 
 The current benchmark ships four canonical scenario families:
 
-| Scenario | What it tests |
-| --- | --- |
-| `high_crystallinity` | The hidden bottleneck is PET accessibility; pretreatment may matter more than enzyme swapping. |
-| `thermostability_bottleneck` | A promising route may fail under realistic operating temperature. |
-| `contamination_artifact` | Observed assay signal can be misleading because contamination distorts evidence. |
-| `no_go` | The best decision is to stop rather than burn budget on an uneconomic route. |
+| Scenario                     | What it tests                                                                                  |
+| ---------------------------- | ---------------------------------------------------------------------------------------------- |
+| `high_crystallinity`         | The hidden bottleneck is PET accessibility; pretreatment may matter more than enzyme swapping. |
+| `thermostability_bottleneck` | A promising route may fail under realistic operating temperature.                              |
+| `contamination_artifact`     | Observed assay signal can be misleading because contamination distorts evidence.               |
+| `no_go`                      | The best decision is to stop rather than burn budget on an uneconomic route.                   |
 
 ### Canonical Intervention Families
 
 Final recommendations use intervention families, not scenario labels:
 
-| Family | Meaning |
-| --- | --- |
-| `pretreat_then_single` | Improve substrate accessibility before enzymatic treatment. |
-| `thermostable_single` | Favor a single robust catalyst route. |
-| `cocktail` | Use a multi-agent or multi-enzyme route. |
-| `no_go` | Stop because the evidence and economics do not support continuation. |
+| Family                 | Meaning                                                              |
+| ---------------------- | -------------------------------------------------------------------- |
+| `pretreat_then_single` | Improve substrate accessibility before enzymatic treatment.          |
+| `thermostable_single`  | Favor a single robust catalyst route.                                |
+| `cocktail`             | Use a multi-agent or multi-enzyme route.                             |
+| `no_go`                | Stop because the evidence and economics do not support continuation. |
 
 ---
 
@@ -196,28 +196,28 @@ Final recommendations use intervention families, not scenario labels:
 
 The canonical public contract lives in `biomed_models/` and uses schema version `biomed_v2`.
 
-| Model layer | Purpose |
-| --- | --- |
-| `biomed_models/contract.py` | Canonical enums, schema version, reward keys, metrics, action costs, and legal vocabulary. |
-| `biomed_models/actions.py` | Strict `BioMedAction` model. |
-| `biomed_models/action_params.py` | Typed action-specific parameter models. |
-| `biomed_models/observation.py` | Public `BioMedObservation`, legal action specs, resources, and episode info. |
-| `biomed_models/state.py` | Visible-only operational state. |
-| `biomed_models/reward.py` | Canonical reward breakdown validation. |
+| Model layer                      | Purpose                                                                                    |
+| -------------------------------- | ------------------------------------------------------------------------------------------ |
+| `biomed_models/contract.py`      | Canonical enums, schema version, reward keys, metrics, action costs, and legal vocabulary. |
+| `biomed_models/actions.py`       | Strict `BioMedAction` model.                                                               |
+| `biomed_models/action_params.py` | Typed action-specific parameter models.                                                    |
+| `biomed_models/observation.py`   | Public `BioMedObservation`, legal action specs, resources, and episode info.               |
+| `biomed_models/state.py`         | Visible-only operational state.                                                            |
+| `biomed_models/reward.py`        | Canonical reward breakdown validation.                                                     |
 
 All canonical public models forbid extra fields. Old action names and loose payload shapes are not accepted as normal contract behavior.
 
 ### Action Surface
 
-| Track | Canonical action kinds |
-| --- | --- |
-| Intake | `inspect_feedstock` |
-| Evidence search | `query_literature`, `query_candidate_registry` |
-| Sample characterization | `measure_crystallinity`, `measure_contamination`, `estimate_particle_size` |
-| Route screening | `estimate_stability_signal`, `run_hydrolysis_assay`, `run_thermostability_assay` |
-| Intervention testing | `test_pretreatment`, `test_cocktail` |
-| Expert and reasoning | `ask_expert`, `state_hypothesis` |
-| Terminal decision | `finalize_recommendation` |
+| Track                   | Canonical action kinds                                                           |
+| ----------------------- | -------------------------------------------------------------------------------- |
+| Intake                  | `inspect_feedstock`                                                              |
+| Evidence search         | `query_literature`, `query_candidate_registry`                                   |
+| Sample characterization | `measure_crystallinity`, `measure_contamination`, `estimate_particle_size`       |
+| Route screening         | `estimate_stability_signal`, `run_hydrolysis_assay`, `run_thermostability_assay` |
+| Intervention testing    | `test_pretreatment`, `test_cocktail`                                             |
+| Expert and reasoning    | `ask_expert`, `state_hypothesis`                                                 |
+| Terminal decision       | `finalize_recommendation`                                                        |
 
 Examples of contract-enforced requirements:
 
@@ -239,7 +239,7 @@ bioMed/
 │   ├── rules/              # Legality and workflow constraints
 │   ├── simulator/          # Hidden latent state, scenarios, transitions, observations
 │   ├── rewards/            # Step reward, terminal reward, shaping, config
-│   └── ui/                 # Judge cockpit recorder, store, serializers, static UI
+│   └── ui/                 # Demo recorder, store, serializers, static UI
 ├── training/               # Baselines, parsing, rollouts, replay, evaluation, GRPO harness
 ├── tests/                  # Unit, contract, integration, API, and e2e tests
 ├── openenv.yaml            # OpenEnv manifest
@@ -292,13 +292,13 @@ port: 8000
 
 Core routes:
 
-| Route | Purpose |
-| --- | --- |
+| Route         | Purpose                                           |
+| ------------- | ------------------------------------------------- |
 | `GET /schema` | Canonical reset/action/observation/state schemas. |
-| `POST /reset` | Reset the current HTTP session environment. |
-| `POST /step` | Apply one canonical `BioMedAction`. |
-| `GET /state` | Return visible-only state. |
-| `GET /ui` | Serve the judge cockpit. |
+| `POST /reset` | Reset the current HTTP session environment.       |
+| `POST /step`  | Apply one canonical `BioMedAction`.               |
+| `GET /state`  | Return visible-only state.                        |
+| `GET /ui`     | Serve the Demo.                                   |
 
 ---
 
@@ -331,7 +331,7 @@ The canonical model package is `biomed_models`. The root `models.py` module re-e
 
 ---
 
-## Judge Cockpit
+## Demo
 
 BioMed includes a static judge/demo UI. It is a cockpit over the benchmark, not the benchmark itself.
 
@@ -365,17 +365,17 @@ When debug mode is disabled, hidden truth is redacted to preserve the POMDP boun
 
 BioMed reward is decomposed so policies can be debugged and compared.
 
-| Component | What it measures |
-| --- | --- |
-| `validity` | Whether the action is legal and executable. |
-| `ordering` | Whether the action fits the current scientific workflow stage. |
-| `info_gain` | Whether the action produced useful uncertainty-reducing evidence. |
-| `efficiency` | Whether the policy used budget and time responsibly. |
-| `novelty` | Whether the action avoids redundant low-value repetition. |
+| Component           | What it measures                                                    |
+| ------------------- | ------------------------------------------------------------------- |
+| `validity`          | Whether the action is legal and executable.                         |
+| `ordering`          | Whether the action fits the current scientific workflow stage.      |
+| `info_gain`         | Whether the action produced useful uncertainty-reducing evidence.   |
+| `efficiency`        | Whether the policy used budget and time responsibly.                |
+| `novelty`           | Whether the action avoids redundant low-value repetition.           |
 | `expert_management` | Whether expert consultations are useful and followed appropriately. |
-| `penalty` | Invalid, premature, redundant, or wasteful behavior. |
-| `shaping` | Potential-based progress over benchmark milestones. |
-| `terminal` | Final recommendation quality or no-finalization penalty. |
+| `penalty`           | Invalid, premature, redundant, or wasteful behavior.                |
+| `shaping`           | Potential-based progress over benchmark milestones.                 |
+| `terminal`          | Final recommendation quality or no-finalization penalty.            |
 
 Terminal quality evaluates structured fields, not prose alone:
 
@@ -429,12 +429,12 @@ python3 -m training.evaluation \
 
 Built-in baseline policies:
 
-| Policy | Purpose |
-| --- | --- |
-| `random_legal` | Samples legal actions to test contract and exploration floor. |
-| `characterize_first` | Prioritizes sample characterization before route testing. |
-| `cost_aware_heuristic` | Balances evidence gathering with budget/time pressure. |
-| `expert_augmented_heuristic` | Uses expert messages as part of workflow planning. |
+| Policy                       | Purpose                                                       |
+| ---------------------------- | ------------------------------------------------------------- |
+| `random_legal`               | Samples legal actions to test contract and exploration floor. |
+| `characterize_first`         | Prioritizes sample characterization before route testing.     |
+| `cost_aware_heuristic`       | Balances evidence gathering with budget/time pressure.        |
+| `expert_augmented_heuristic` | Uses expert messages as part of workflow planning.            |
 
 ---
 
@@ -550,13 +550,13 @@ The Docker image serves the FastAPI app declared in `openenv.yaml`.
 
 The test suite is organized around benchmark integrity:
 
-| Layer | What it protects |
-| --- | --- |
-| Unit | Strict model validation, reward semantics, scenario construction, UI serializers. |
-| Contract | Canonical action registry, metric schema, hidden-field bans, rule/reward/evaluator alignment. |
-| Integration | Reset/step/state roundtrips, deterministic rollouts, training alignment, UI recording. |
-| API | HTTP schema, OpenEnv endpoints, UI routes, debug redaction, replay export. |
-| E2E | Training surface and end-to-end benchmark flow. |
+| Layer       | What it protects                                                                              |
+| ----------- | --------------------------------------------------------------------------------------------- |
+| Unit        | Strict model validation, reward semantics, scenario construction, UI serializers.             |
+| Contract    | Canonical action registry, metric schema, hidden-field bans, rule/reward/evaluator alignment. |
+| Integration | Reset/step/state roundtrips, deterministic rollouts, training alignment, UI recording.        |
+| API         | HTTP schema, OpenEnv endpoints, UI routes, debug redaction, replay export.                    |
+| E2E         | Training surface and end-to-end benchmark flow.                                               |
 
 Recommended full validation:
 
