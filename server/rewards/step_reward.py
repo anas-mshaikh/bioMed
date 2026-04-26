@@ -263,11 +263,9 @@ class StepRewardEngine:
         if action_kind == "inspect_feedstock":
             if d.get("feedstock_inspected", False):
                 return self.config.redundancy_penalty
-            return (
-                self.config.ordering_natural_reward
-                if evidence_count == 0
-                else self.config.ordering_acceptable_reward
-            )
+            if evidence_count == 0:
+                return self.config.ordering_natural_reward
+            return 0.0
 
         if action_kind in {
             "measure_crystallinity",

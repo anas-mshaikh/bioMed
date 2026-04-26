@@ -206,6 +206,20 @@ def test_repeated_literature_gets_negative_net_reward() -> None:
     assert second.reward_breakdown["validity"] == 0.0
 
 
+def test_late_inspect_feedstock_is_not_preferred() -> None:
+    engine = _step_reward_engine()
+    state = _state({"feedstock_inspected": True})
+
+    inspect_score = engine._ordering_score(BioMedAction(action_kind=ActionKind.INSPECT_FEEDSTOCK), state)
+    candidate_score = engine._ordering_score(
+        BioMedAction(action_kind=ActionKind.QUERY_CANDIDATE_REGISTRY),
+        state,
+    )
+
+    assert inspect_score <= 0.0
+    assert candidate_score > inspect_score
+
+
 def test_finalize_from_reset_is_blocked() -> None:
     latent = sample_episode_latent_state(
         seed=7,

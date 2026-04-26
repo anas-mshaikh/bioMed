@@ -8,54 +8,30 @@
 # ]
 # ///
 
-"""
-HF Jobs bootstrap runner for BioMed training.
-
-Purpose:
-- Download a private local-source tarball from a HF dataset repo.
-- Extract it on the HF Job machine.
-- Install project dependencies.
-- Run your existing local training command.
-- Upload training outputs back to a HF model/dataset repo.
-
-This lets you train local project files on HF Jobs without GitHub.
-
-Example:
-  hf jobs uv run --flavor l4x1 --timeout 1h --secrets HF_TOKEN hf_biomed_job.py \
-    --src-repo YOUR_USER/biomed-train-src \
-    --src-filename biomed_src.tgz \
-    --result-repo YOUR_USER/biomed-training-runs \
-    --result-repo-type dataset \
-    --run-name smoke_10 \
-    --requirements requirements-hf-train.txt \
-    -- \
-    python training/training_unsloth.py \
-      --model-id Qwen/Qwen3-0.6B \
-      --training-mode single_action_curriculum \
-      --dataset-episodes 8 \
-      --rollout-steps 2 \
-      --trainer-max-steps 10 \
-      --num-generations 2 \
-      --output-dir outputs/hf_smoke_10
-"""
-
 from __future__ import annotations
 
 import argparse
+import base64
 import os
 import shutil
 import subprocess
 import sys
-import tarfile
 import time
 from pathlib import Path
 from typing import Sequence
 
-from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub import HfApi
 
 
 def log(message: str) -> None:
-    print(f"[hf-biomed-job] {message}", flush=True)
+    print(f"[hf-github-job] {message}", flush=True)
+
+
+def redact(text: str, secrets: list[str]) -> str:
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "***")
+    return text
 
 
 def run_cmd(
@@ -64,9 +40,11 @@ def run_cmd(
     cwd: Path | None = None,
     env: dict[str, str] | None = None,
     check: bool = True,
+    secrets: list[str] | None = None,
 ) -> subprocess.CompletedProcess:
+    secrets = secrets or []
     pretty = " ".join(str(x) for x in cmd)
-    log(f"RUN: {pretty}")
+    log(f"RUN: {redact(pretty, secrets)}")
     return subprocess.run(
         list(cmd),
         cwd=str(cwd) if cwd else None,
@@ -76,38 +54,32 @@ def run_cmd(
     )
 
 
-def safe_extract_tar(tar_path: Path, extract_dir: Path) -> None:
-    """
-    Safe-ish tar extraction: blocks path traversal.
-    """
-    extract_dir = extract_dir.resolve()
-    with tarfile.open(tar_path, "r:gz") as tar:
-        for member in tar.getmembers():
-            target = (extract_dir / member.name).resolve()
-            if not str(target).startswith(str(extract_dir)):
-                raise RuntimeError(f"Unsafe path in tar archive: {member.name}")
-        tar.extractall(extract_dir)
+def python_has_pip() -> bool:
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "--version"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    return result.returncode == 0
 
 
-def find_project_root(extract_dir: Path, preferred_subdir: str | None) -> Path:
-    if preferred_subdir:
-        candidate = extract_dir / preferred_subdir
-        if candidate.exists():
-            return candidate.resolve()
-        raise FileNotFoundError(f"--project-subdir not found: {candidate}")
+def ensure_pip() -> None:
+    if python_has_pip():
+        return
 
-    # If archive extracted directly with pyproject/training folder.
-    if (extract_dir / "pyproject.toml").exists() or (extract_dir / "training").exists():
-        return extract_dir.resolve()
+    log("pip not found. Trying ensurepip...")
+    result = subprocess.run([sys.executable, "-m", "ensurepip", "--upgrade"], text=True)
 
-    # If tar preserved one root folder.
-    children = [p for p in extract_dir.iterdir() if p.is_dir()]
-    for child in children:
-        if (child / "pyproject.toml").exists() or (child / "training").exists():
-            return child.resolve()
+    if result.returncode != 0 or not python_has_pip():
+        raise RuntimeError(
+            "pip is not available. Keep pip/setuptools/wheel in the UV dependency block."
+        )
 
-    # Fall back to extract dir.
-    return extract_dir.resolve()
+
+def pip_install(args: list[str]) -> None:
+    ensure_pip()
+    run_cmd([sys.executable, "-m", "pip", "install", *args])
 
 
 def install_dependencies(
@@ -117,30 +89,73 @@ def install_dependencies(
     install_editable: bool,
     extra_pip: list[str],
 ) -> None:
-    run_cmd([sys.executable, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"])
+    pip_install(["--upgrade", "pip", "setuptools", "wheel"])
 
     if requirements:
         req_path = project_root / requirements
         if not req_path.exists():
             raise FileNotFoundError(f"Requirements file not found: {req_path}")
-        run_cmd([sys.executable, "-m", "pip", "install", "-r", str(req_path)])
+        pip_install(["-r", str(req_path)])
 
     if extra_pip:
-        run_cmd([sys.executable, "-m", "pip", "install", *extra_pip])
+        pip_install(extra_pip)
 
     if install_editable:
         if (project_root / "pyproject.toml").exists() or (project_root / "setup.py").exists():
-            run_cmd([sys.executable, "-m", "pip", "install", "-e", str(project_root)])
+            pip_install(["-e", str(project_root)])
         else:
-            log("No pyproject.toml/setup.py found; skipping editable install.")
+            log("No pyproject.toml/setup.py found. Skipping editable install.")
 
 
-def create_repo_if_needed(
-    api: HfApi,
-    repo_id: str,
-    repo_type: str,
-    private: bool,
+def github_auth_header(token: str) -> str:
+    # GitHub git-over-HTTPS works reliably with basic auth:
+    # username = x-access-token, password = token
+    raw = f"x-access-token:{token}".encode("utf-8")
+    encoded = base64.b64encode(raw).decode("ascii")
+    return f"AUTHORIZATION: basic {encoded}"
+
+
+def clone_github_repo(
+    *,
+    github_repo: str,
+    branch: str,
+    commit: str | None,
+    destination: Path,
+    token: str | None,
 ) -> None:
+    clone_url = f"https://github.com/{github_repo}.git"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    if destination.exists():
+        shutil.rmtree(destination)
+
+    cmd = ["git"]
+
+    secrets = []
+    if token:
+        header = github_auth_header(token)
+        cmd += ["-c", f"http.https://github.com/.extraheader={header}"]
+        secrets.append(header)
+        secrets.append(token)
+
+    cmd += [
+        "clone",
+        "--depth",
+        "1",
+        "--branch",
+        branch,
+        clone_url,
+        str(destination),
+    ]
+
+    run_cmd(cmd, secrets=secrets)
+
+    if commit:
+        run_cmd(["git", "fetch", "--depth", "1", "origin", commit], cwd=destination)
+        run_cmd(["git", "checkout", commit], cwd=destination)
+
+
+def create_repo_if_needed(api: HfApi, repo_id: str, repo_type: str, private: bool) -> None:
     api.create_repo(
         repo_id=repo_id,
         repo_type=repo_type,
@@ -164,17 +179,12 @@ def upload_outputs(
         out_path = project_root / out_path
 
     if not out_path.exists():
-        log(f"Output directory not found, skipping upload: {out_path}")
+        log(f"Output directory not found. Skipping upload: {out_path}")
         return
 
-    create_repo_if_needed(
-        api=api,
-        repo_id=result_repo,
-        repo_type=result_repo_type,
-        private=private_results,
-    )
+    create_repo_if_needed(api, result_repo, result_repo_type, private_results)
 
-    log(f"Uploading outputs from {out_path} to {result_repo_type}:{result_repo}/{run_name}")
+    log(f"Uploading {out_path} to {result_repo_type}:{result_repo}/{run_name}")
     api.upload_folder(
         folder_path=str(out_path),
         repo_id=result_repo,
@@ -184,98 +194,63 @@ def upload_outputs(
     )
 
 
-def write_run_metadata(project_root: Path, run_name: str, command: list[str]) -> None:
+def infer_output_dir(command: list[str]) -> str | None:
+    for i, item in enumerate(command):
+        if item == "--output-dir" and i + 1 < len(command):
+            return command[i + 1]
+        if item.startswith("--output-dir="):
+            return item.split("=", 1)[1]
+    return None
+
+
+def write_metadata(project_root: Path, run_name: str, command: list[str]) -> None:
     meta_dir = project_root / "outputs" / "hf_job_metadata"
     meta_dir.mkdir(parents=True, exist_ok=True)
+
     meta_file = meta_dir / f"{run_name}.txt"
-
-    lines = [
-        f"run_name={run_name}",
-        f"timestamp={int(time.time())}",
-        f"cwd={project_root}",
-        f"python={sys.version}",
-        "command=" + " ".join(command),
-        "",
-        "environment:",
-    ]
-
-    for key in sorted(os.environ):
-        if key.upper().endswith("TOKEN") or "SECRET" in key.upper():
-            continue
-        if key.startswith(("HF_", "CUDA", "ACCELERATE", "TRANSFORMERS", "TRL", "WANDB")):
-            lines.append(f"{key}={os.environ.get(key)}")
-
-    meta_file.write_text("\n".join(lines), encoding="utf-8")
+    meta_file.write_text(
+        "\n".join(
+            [
+                f"run_name={run_name}",
+                f"timestamp={int(time.time())}",
+                f"project_root={project_root}",
+                f"python={sys.version}",
+                "command=" + " ".join(command),
+            ]
+        ),
+        encoding="utf-8",
+    )
     log(f"Wrote metadata: {meta_file}")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser("Run local BioMed training source on Hugging Face Jobs.")
+    parser = argparse.ArgumentParser("Clone GitHub repo and run BioMed training on HF Jobs.")
 
     parser.add_argument(
-        "--src-repo",
-        required=True,
-        help="HF dataset repo containing source tarball, e.g. user/biomed-train-src",
+        "--github-repo", required=True, help="GitHub repo as owner/name, e.g. theRake/bioMed"
     )
+    parser.add_argument("--branch", default="main")
     parser.add_argument(
-        "--src-repo-type",
-        default="dataset",
-        choices=["dataset", "model"],
-        help="Repo type for source bundle.",
+        "--commit", default=None, help="Optional exact commit SHA for reproducible runs."
     )
-    parser.add_argument(
-        "--src-filename", default="biomed_src.tgz", help="Filename inside source repo."
-    )
-    parser.add_argument("--src-revision", default="main", help="Source repo revision.")
 
-    parser.add_argument(
-        "--project-subdir", default=None, help="Optional subdir inside extracted tarball."
-    )
-    parser.add_argument("--workdir", default="/tmp/biomed_job_work", help="Remote work directory.")
-
-    parser.add_argument(
-        "--requirements",
-        default=None,
-        help="Requirements file inside project root, e.g. requirements-hf-train.txt",
-    )
-    parser.add_argument(
-        "--install-editable",
-        action="store_true",
-        default=True,
-        help="pip install -e project root if pyproject/setup exists.",
-    )
+    parser.add_argument("--workdir", default="/tmp/biomed_github_job")
+    parser.add_argument("--requirements", default="requirements-hf-train.txt")
+    parser.add_argument("--install-editable", action="store_true", default=True)
     parser.add_argument("--no-install-editable", action="store_false", dest="install_editable")
-    parser.add_argument(
-        "--extra-pip",
-        action="append",
-        default=[],
-        help="Extra pip packages. Can be repeated, e.g. --extra-pip trl --extra-pip bitsandbytes",
-    )
+    parser.add_argument("--extra-pip", action="append", default=[])
 
     parser.add_argument("--result-repo", required=True, help="HF repo to upload outputs to.")
-    parser.add_argument(
-        "--result-repo-type",
-        default="dataset",
-        choices=["dataset", "model"],
-        help="Repo type for outputs.",
-    )
-    parser.add_argument("--run-name", required=True, help="Subfolder name in result repo.")
-    parser.add_argument(
-        "--output-dir",
-        default=None,
-        help="Training output dir to upload. If omitted, tries to infer from command.",
-    )
+    parser.add_argument("--result-repo-type", default="dataset", choices=["dataset", "model"])
+    parser.add_argument("--run-name", required=True)
+    parser.add_argument("--output-dir", default=None)
     parser.add_argument("--private-results", action="store_true", default=True)
     parser.add_argument("--public-results", action="store_false", dest="private_results")
 
-    parser.add_argument("--skip-install", action="store_true", help="Skip pip installation.")
-    parser.add_argument("--skip-upload", action="store_true", help="Skip output upload.")
+    parser.add_argument("--skip-install", action="store_true")
+    parser.add_argument("--skip-upload", action="store_true")
 
-    parser.add_argument(
-        "command",
-        nargs=argparse.REMAINDER,
-        help="Training command after --, e.g. -- python training/training_unsloth.py ...",
-    )
+    parser.add_argument("command", nargs=argparse.REMAINDER)
 
     args = parser.parse_args()
 
@@ -288,46 +263,29 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def infer_output_dir(command: list[str]) -> str | None:
-    for i, item in enumerate(command):
-        if item == "--output-dir" and i + 1 < len(command):
-            return command[i + 1]
-        if item.startswith("--output-dir="):
-            return item.split("=", 1)[1]
-    return None
-
-
 def main() -> None:
     args = parse_args()
 
     hf_token = os.environ.get("HF_TOKEN")
-    if not hf_token:
-        log("WARNING: HF_TOKEN not found. Private repo download/upload may fail.")
+    github_token = os.environ.get("GITHUB_TOKEN")
 
     api = HfApi(token=hf_token)
 
     workdir = Path(args.workdir)
+    project_root = workdir / "repo"
+
     if workdir.exists():
         shutil.rmtree(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
 
-    extract_dir = workdir / "src"
-    extract_dir.mkdir(parents=True, exist_ok=True)
-
-    log(f"Downloading source bundle: {args.src_repo}/{args.src_filename}")
-    bundle_path = hf_hub_download(
-        repo_id=args.src_repo,
-        repo_type=args.src_repo_type,
-        filename=args.src_filename,
-        revision=args.src_revision,
-        token=hf_token,
+    log(f"Cloning GitHub repo: {args.github_repo} branch={args.branch}")
+    clone_github_repo(
+        github_repo=args.github_repo,
+        branch=args.branch,
+        commit=args.commit,
+        destination=project_root,
+        token=github_token,
     )
-
-    log(f"Extracting source bundle: {bundle_path}")
-    safe_extract_tar(Path(bundle_path), extract_dir)
-
-    project_root = find_project_root(extract_dir, args.project_subdir)
-    log(f"Project root: {project_root}")
 
     if not args.skip_install:
         install_dependencies(
@@ -336,15 +294,12 @@ def main() -> None:
             install_editable=args.install_editable,
             extra_pip=args.extra_pip,
         )
-    else:
-        log("Skipping dependency install.")
 
-    write_run_metadata(project_root, args.run_name, args.command)
+    write_metadata(project_root, args.run_name, args.command)
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     env["TOKENIZERS_PARALLELISM"] = env.get("TOKENIZERS_PARALLELISM", "false")
-    env["HF_HUB_ENABLE_HF_TRANSFER"] = env.get("HF_HUB_ENABLE_HF_TRANSFER", "1")
 
     exit_code = 0
     try:
@@ -366,13 +321,11 @@ def main() -> None:
                         private_results=args.private_results,
                     )
                 except Exception as exc:
-                    log(f"Output upload failed: {exc!r}")
+                    log(f"Upload failed: {exc!r}")
                     if exit_code == 0:
                         exit_code = 2
             else:
-                log("No output dir provided/inferred; skipping output upload.")
-        else:
-            log("Skipping output upload.")
+                log("No output dir provided/inferred. Skipping upload.")
 
     raise SystemExit(exit_code)
 

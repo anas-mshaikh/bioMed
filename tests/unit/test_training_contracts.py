@@ -4,8 +4,14 @@ from pathlib import Path
 
 import pytest
 
+from server.bioMed_environment import BioMedEnvironment
 from training.parsing import parse_tool_call
-from training.trainer_script import DEFAULT_SCENARIO_FAMILIES, build_prompt
+from training.trainer_script import (
+    DEFAULT_SCENARIO_FAMILIES,
+    build_prompt,
+    _summarize_reward_trace_actions,
+)
+from training.training_unsloth import make_heuristic_action, select_collection_action
 from biomed_models.semantics import structured_expert_guidance_from_observation
 
 
@@ -95,3 +101,55 @@ def test_structured_expert_guidance_prefers_latest_reply() -> None:
     }
     guidance = structured_expert_guidance_from_observation(observation)
     assert guidance.value == "test_cocktail"
+
+
+def test_collection_policy_moves_past_initial_inspection() -> None:
+    env = BioMedEnvironment()
+    obs = env.reset(seed=0, scenario_family="high_crystallinity", difficulty="easy")
+
+    first_kind = select_collection_action(
+        obs,
+        step_idx=0,
+        policy="heuristic",
+        seed=0,
+        history_actions=[],
+    )
+    assert first_kind == "inspect_feedstock"
+
+    first_action = make_heuristic_action(first_kind, obs=obs, history_actions=[])
+    obs_after_first = env.step(first_action).observation
+
+    second_kind = select_collection_action(
+        obs_after_first,
+        step_idx=1,
+        policy="heuristic",
+        seed=0,
+        history_actions=[first_action],
+    )
+
+    assert second_kind != "inspect_feedstock"
+    assert second_kind in {
+        "query_candidate_registry",
+        "query_literature",
+        "measure_crystallinity",
+        "measure_contamination",
+        "estimate_particle_size",
+        "ask_expert",
+        "state_hypothesis",
+    }
+
+
+def test_training_diagnostics_aggregate_all_batches() -> None:
+    counts, diversity = _summarize_reward_trace_actions(
+        [
+            {"action_kind_counts": {"inspect_feedstock": 4}, "action_diversity": 1},
+            {
+                "action_kind_counts": {"inspect_feedstock": 1, "query_literature": 2},
+                "action_diversity": 2,
+            },
+        ]
+    )
+
+    assert counts == {"inspect_feedstock": 5, "query_literature": 2}
+    assert diversity[-1] == 2
+    assert sum(diversity) / len(diversity) == pytest.approx(1.5)

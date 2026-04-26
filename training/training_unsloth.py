@@ -26,8 +26,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from datasets import Dataset
-
 try:
     import trainer_script as base  # direct execution from training/
 except ModuleNotFoundError:
@@ -87,8 +85,8 @@ class BioMedUnslothConfig:
 
     # Training mode
     training_mode: str = "single_action_curriculum"  # see choices below
-    rollout_steps: int = 4
-    collection_policy: str = "heuristic"
+    rollout_steps: int = 5
+    collection_policy: str = "mixed"
 
     # Reward penalties / bonuses
     format_bonus: float = 0.05
@@ -158,11 +156,11 @@ def parse_args() -> BioMedUnslothConfig:
         choices=TRAINING_MODE_CHOICES,
         default="single_action_curriculum",
     )
-    parser.add_argument("--rollout-steps", type=int, default=4)
+    parser.add_argument("--rollout-steps", type=int, default=5)
     parser.add_argument(
         "--collection-policy",
         choices=["heuristic", "random", "mixed"],
-        default="heuristic",
+        default="mixed",
     )
 
     parser.add_argument("--format-bonus", type=float, default=0.05)
@@ -458,6 +456,7 @@ class BioMedOpenEnvReward:
             "known_action_rate": diag["known_action"] / n,
             "valid_schema_rate": diag["valid_schema"] / n,
             "legal_action_rate": diag["legal_action"] / n,
+            "action_diversity": float(len(diag["action_kind_counts"])),
             "action_kind_counts": dict(diag["action_kind_counts"]),
             "env_reward_mean": sum(env_rewards) / n_scored if env_rewards else 0.0,
             "reward_std": _std(all_rewards),
@@ -694,6 +693,7 @@ def build_unsloth_prompt_examples(config: BioMedUnslothConfig) -> list[dict[str,
                 step_idx=step_idx,
                 policy=config.collection_policy,
                 seed=seed,
+                history_actions=history_actions,
             )
             action = make_heuristic_action(selected_kind, obs=obs, history_actions=history_actions)
             history_actions.append(action)
@@ -762,13 +762,23 @@ def select_collection_action(
     step_idx: int,
     policy: str,
     seed: int = 0,
+    history_actions: list[Any] | None = None,
 ) -> str:
     import random as _random
 
     legal = _extract_legal_kinds(obs)
+    history_kinds = {
+        str(getattr(action.action_kind, "value", action.action_kind))
+        for action in _decode_history_actions(history_actions)
+        if getattr(action, "action_kind", None) is not None
+    }
 
     if not legal:
         return "finalize_recommendation"
+
+    def _preferred_action() -> str:
+        ordered = _heuristic_priority(legal, history_kinds, step_idx)
+        return ordered[0] if ordered else legal[0]
 
     if policy == "random":
         rng = _random.Random(seed + step_idx)
@@ -777,50 +787,56 @@ def select_collection_action(
     if policy == "mixed":
         rng = _random.Random(seed + step_idx)
         roll = rng.random()
-        if roll < 0.15:
-            # Noisy heuristic: shuffle the priority list
-            preferred = _heuristic_priority(legal)
-            if len(preferred) > 1:
-                skip = rng.random() < 0.4
-                if skip:
-                    preferred = preferred[1:]
-            return preferred[0] if preferred else legal[0]
-        elif roll < 0.40:
-            # Random legal
+        if roll < 0.45:
+            return _preferred_action()
+        if roll < 0.75:
             return rng.choice(legal)
-        else:
-            # Standard heuristic (60%)
-            return _pick_heuristic(legal)
+        return _preferred_action()
 
-    # Default: heuristic
-    return _pick_heuristic(legal)
+    # Default: progression-aware heuristic
+    return _preferred_action()
 
 
-def _heuristic_priority(legal: list[str]) -> list[str]:
-    preferred_order = [
-        "inspect_feedstock",
-        "measure_crystallinity",
-        "measure_contamination",
-        "estimate_particle_size",
-        "query_literature",
-        "query_candidate_registry",
-        "estimate_stability_signal",
-        "run_hydrolysis_assay",
-        "run_thermostability_assay",
-        "test_pretreatment",
-        "test_cocktail",
-        "ask_expert",
-        "state_hypothesis",
-        "finalize_recommendation",
-    ]
+def _heuristic_priority(
+    legal: list[str],
+    history_kinds: set[str] | None = None,
+    step_idx: int = 0,
+) -> list[str]:
+    history_kinds = history_kinds or set()
+    inspected = "inspect_feedstock" in history_kinds or step_idx > 0
+
+    if not inspected:
+        preferred_order = [
+            "inspect_feedstock",
+            "query_candidate_registry",
+            "query_literature",
+            "measure_crystallinity",
+            "measure_contamination",
+            "estimate_particle_size",
+            "ask_expert",
+            "state_hypothesis",
+        ]
+    else:
+        preferred_order = [
+            "query_candidate_registry",
+            "query_literature",
+            "measure_crystallinity",
+            "measure_contamination",
+            "estimate_particle_size",
+            "ask_expert",
+            "state_hypothesis",
+            "estimate_stability_signal",
+            "run_hydrolysis_assay",
+            "run_thermostability_assay",
+            "test_pretreatment",
+            "test_cocktail",
+            "finalize_recommendation",
+            "inspect_feedstock",
+        ]
+
     ordered = [a for a in preferred_order if a in legal]
     remaining = [a for a in legal if a not in ordered]
     return ordered + remaining
-
-
-def _pick_heuristic(legal: list[str]) -> str:
-    ordered = _heuristic_priority(legal)
-    return ordered[0] if ordered else legal[0]
 
 
 # ---------------------------------------------------------------------------
@@ -1285,6 +1301,8 @@ def run_training(config: BioMedUnslothConfig) -> None:
         json.dumps(preview, indent=2, ensure_ascii=False, default=str),
         encoding="utf-8",
     )
+
+    from datasets import Dataset
 
     dataset = Dataset.from_list(examples)
     reward_func = BioMedOpenEnvReward(config, output_dir=out_dir)

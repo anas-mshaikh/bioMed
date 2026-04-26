@@ -5,6 +5,7 @@ import json
 import math
 import sys
 import warnings
+from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -430,6 +431,24 @@ def _auto_select_metric_key(log_history: list[dict[str, Any]]) -> str | None:
     return max(candidate_counts.items(), key=lambda item: item[1])[0]
 
 
+def _summarize_reward_trace_actions(
+    reward_trace: list[dict[str, Any]] | None,
+) -> tuple[dict[str, int], list[float]]:
+    aggregate_action_counts: Counter[str] = Counter()
+    action_diversity_values: list[float] = []
+
+    for row in reward_trace or []:
+        counts = row.get("action_kind_counts", {})
+        if not isinstance(counts, dict):
+            continue
+        aggregate_action_counts.update(
+            {str(kind): int(count or 0) for kind, count in counts.items()}
+        )
+        action_diversity_values.append(float(row.get("action_diversity", len(counts)) or len(counts)))
+
+    return dict(aggregate_action_counts), action_diversity_values
+
+
 def save_training_plots(
     *,
     out_dir: Path,
@@ -437,13 +456,23 @@ def save_training_plots(
     metric_key: str | None,
     reward_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    aggregate_action_counts, action_diversity_values = _summarize_reward_trace_actions(
+        reward_trace
+    )
+
     try:
         import matplotlib.pyplot as plt
     except Exception as exc:  # pragma: no cover
         manifest = {
             "plots_saved": False,
             "reason": f"matplotlib unavailable: {type(exc).__name__}: {exc}",
+            "action_counts_total": aggregate_action_counts,
         }
+        if action_diversity_values:
+            manifest["action_diversity_mean"] = sum(action_diversity_values) / len(
+                action_diversity_values
+            )
+            manifest["action_diversity_last"] = action_diversity_values[-1]
         save_json(out_dir / "training_plot_manifest.json", manifest)
         return manifest
 
@@ -564,7 +593,6 @@ def save_training_plots(
     if reward_trace:
         try:
             trace_batches = list(range(len(reward_trace)))
-
             def _trace_series(key: str) -> list[float]:
                 return [float(r.get(key, 0.0) or 0.0) for r in reward_trace]
 
@@ -595,16 +623,27 @@ def save_training_plots(
             plt.ylabel("std")
             plt.title("Reward std (GRPO signal health)")
 
-            # Action distribution in last batch
+            # Action distribution across all batches
             plt.subplot(2, 2, 4)
-            last_counts = reward_trace[-1].get("action_kind_counts", {})
-            if last_counts and isinstance(last_counts, dict):
-                kinds = list(last_counts.keys())
-                counts = [last_counts[k] for k in kinds]
+            if aggregate_action_counts:
+                kinds = list(aggregate_action_counts.keys())
+                counts = [aggregate_action_counts[k] for k in kinds]
                 short_kinds = [k[:10] for k in kinds]
                 plt.bar(range(len(kinds)), counts)
                 plt.xticks(range(len(kinds)), short_kinds, rotation=45, ha="right", fontsize=7)
-                plt.title("Action dist (last batch)")
+                plt.title("Action dist (all batches)")
+                plt.ylabel("count")
+                if action_diversity_values:
+                    plt.text(
+                        0.02,
+                        0.98,
+                        f"mean diversity={sum(action_diversity_values)/len(action_diversity_values):.2f}\n"
+                        f"last diversity={action_diversity_values[-1]:.2f}",
+                        transform=plt.gca().transAxes,
+                        va="top",
+                        ha="left",
+                        fontsize=8,
+                    )
             else:
                 plt.text(0.5, 0.5, "No action counts", ha="center", va="center")
                 plt.axis("off")
@@ -614,6 +653,12 @@ def save_training_plots(
             plt.savefig(diag_path)
             plt.close()
             manifest["files"].append(diag_path.name)
+            manifest["action_counts_total"] = dict(aggregate_action_counts)
+            if action_diversity_values:
+                manifest["action_diversity_mean"] = sum(action_diversity_values) / len(
+                    action_diversity_values
+                )
+                manifest["action_diversity_last"] = action_diversity_values[-1]
         except Exception:
             pass
 
