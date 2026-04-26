@@ -4,7 +4,7 @@
 
 **Links**
 
-* [Project video](https://drive.google.com/file/d/1E5Q6DNojvahpWNRRlCUAaq4Q-TqijVgF/view?usp=drive_link)
+* [Project video](https://drive.google.com/file/d/1KFknDtVNIZbhxlhb6tfiweJr4Q9V6Pqi/view?usp=drive_link)
 * [Collab Notebook](https://colab.research.google.com/drive/1wDu723LyUvm3WL_MIPwPMczJMzxs6tUF#scrollTo=44VHyyTmibbg)
 * [Problem statement video](https://drive.google.com/file/d/1Tl4btcO9BJSN1-o-DbJwHh1drMIUkOLi/view?usp=sharing)
 * [Hugging Face blog mirror](https://huggingface.co/spaces/theRake/bioMed/blob/main/BioMed_blog.md)
