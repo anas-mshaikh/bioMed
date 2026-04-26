@@ -26,10 +26,10 @@ For the longer narrative / Hugging Face-style writeup, see [BioMed_blog.md](BioM
 
 ## Links
 
-- [Project video / presentation](https://drive.google.com/file/d/1Tl4btcO9BJSN1-o-DbJwHh1drMIUkOLi/view?usp=sharing)
-- [Hugging Face blog mirror](https://huggingface.co/spaces/theRake/bioMed/blob/main/BioMed_blog.md)
-
-## Training Evidence
+* [Project video](https://drive.google.com/file/d/1E5Q6DNojvahpWNRRlCUAaq4Q-TqijVgF/view?usp=drive_link)
+* [Collab Notebook](https://colab.research.google.com/drive/1wDu723LyUvm3WL_MIPwPMczJMzxs6tUF#scrollTo=44VHyyTmibbg)
+* [Problem statement video](https://drive.google.com/file/d/1Tl4btcO9BJSN1-o-DbJwHh1drMIUkOLi/view?usp=sharing)
+* [Hugging Face blog mirror](https://huggingface.co/spaces/theRake/bioMed/blob/main/BioMed_blog.md)
 
 ![Training Dashboard](artifacts/training_dashboard.png)
 
@@ -43,10 +43,10 @@ Most science-agent demos reward fluent explanations. BioMed rewards **decision q
 
 In each episode, the agent sees only public observations: artifacts, warnings, expert messages, legal actions, resources, and noisy assay outputs. The ground truth remains server-side. A strong policy must infer whether the real bottleneck is substrate accessibility, thermostability, contamination artifact, cocktail synergy, route mismatch, or a true no-go case.
 
-| Benchmark dimension      | BioMed implementation                                                                                                 |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| Benchmark dimension            | BioMed implementation                                                                                                 |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
 | **POMDP structure**      | Hidden scenario truth and noisy outputs are separated from visible state.                                             |
-| **Typed action space**   | Agents submit canonical `BioMedAction` objects, not free-form prose.                                                  |
+| **Typed action space**   | Agents submit canonical `BioMedAction` objects, not free-form prose.                                                |
 | **Scientific workflow**  | Inspection, characterization, registry search, assays, experts, hypotheses, final recommendation.                     |
 | **Reward decomposition** | Validity, ordering, information gain, efficiency, novelty, expert management, penalties, shaping, terminal quality.   |
 | **Evaluation integrity** | Public trajectories stay truth-clean; private truth sidecars enable offline benchmark metrics.                        |
@@ -167,8 +167,8 @@ PET remediation is difficult because enzymatic degradation depends on substrate 
 
 The current benchmark ships four canonical scenario families:
 
-| Scenario                     | What it tests                                                                                  |
-| ---------------------------- | ---------------------------------------------------------------------------------------------- |
+| Scenario                       | What it tests                                                                                  |
+| ------------------------------ | ---------------------------------------------------------------------------------------------- |
 | `high_crystallinity`         | The hidden bottleneck is PET accessibility; pretreatment may matter more than enzyme swapping. |
 | `thermostability_bottleneck` | A promising route may fail under realistic operating temperature.                              |
 | `contamination_artifact`     | Observed assay signal can be misleading because contamination distorts evidence.               |
@@ -178,8 +178,8 @@ The current benchmark ships four canonical scenario families:
 
 Final recommendations use intervention families, not scenario labels:
 
-| Family                 | Meaning                                                              |
-| ---------------------- | -------------------------------------------------------------------- |
+| Family                   | Meaning                                                              |
+| ------------------------ | -------------------------------------------------------------------- |
 | `pretreat_then_single` | Improve substrate accessibility before enzymatic treatment.          |
 | `thermostable_single`  | Favor a single robust catalyst route.                                |
 | `cocktail`             | Use a multi-agent or multi-enzyme route.                             |
@@ -191,12 +191,12 @@ Final recommendations use intervention families, not scenario labels:
 
 The canonical public contract lives in `biomed_models/` and uses schema version `biomed_v2`.
 
-| Model layer                      | Purpose                                                                                    |
-| -------------------------------- | ------------------------------------------------------------------------------------------ |
+| Model layer                        | Purpose                                                                                    |
+| ---------------------------------- | ------------------------------------------------------------------------------------------ |
 | `biomed_models/contract.py`      | Canonical enums, schema version, reward keys, metrics, action costs, and legal vocabulary. |
-| `biomed_models/actions.py`       | Strict `BioMedAction` model.                                                               |
+| `biomed_models/actions.py`       | Strict `BioMedAction` model.                                                             |
 | `biomed_models/action_params.py` | Typed action-specific parameter models.                                                    |
-| `biomed_models/observation.py`   | Public `BioMedObservation`, legal action specs, resources, and episode info.               |
+| `biomed_models/observation.py`   | Public `BioMedObservation`, legal action specs, resources, and episode info.             |
 | `biomed_models/state.py`         | Visible-only operational state.                                                            |
 | `biomed_models/reward.py`        | Canonical reward breakdown validation.                                                     |
 
@@ -204,15 +204,15 @@ All canonical public models forbid extra fields. Old action names and loose payl
 
 ### Action Surface
 
-| Track                   | Canonical action kinds                                                           |
-| ----------------------- | -------------------------------------------------------------------------------- |
-| Intake                  | `inspect_feedstock`                                                              |
-| Evidence search         | `query_literature`, `query_candidate_registry`                                   |
+| Track                   | Canonical action kinds                                                                 |
+| ----------------------- | -------------------------------------------------------------------------------------- |
+| Intake                  | `inspect_feedstock`                                                                  |
+| Evidence search         | `query_literature`, `query_candidate_registry`                                     |
 | Sample characterization | `measure_crystallinity`, `measure_contamination`, `estimate_particle_size`       |
 | Route screening         | `estimate_stability_signal`, `run_hydrolysis_assay`, `run_thermostability_assay` |
-| Intervention testing    | `test_pretreatment`, `test_cocktail`                                             |
-| Expert and reasoning    | `ask_expert`, `state_hypothesis`                                                 |
-| Terminal decision       | `finalize_recommendation`                                                        |
+| Intervention testing    | `test_pretreatment`, `test_cocktail`                                               |
+| Expert and reasoning    | `ask_expert`, `state_hypothesis`                                                   |
+| Terminal decision       | `finalize_recommendation`                                                            |
 
 Examples of contract-enforced requirements:
 
@@ -287,11 +287,11 @@ port: 8000
 
 Core routes:
 
-| Route         | Purpose                                           |
-| ------------- | ------------------------------------------------- |
+| Route           | Purpose                                           |
+| --------------- | ------------------------------------------------- |
 | `GET /schema` | Canonical reset/action/observation/state schemas. |
 | `POST /reset` | Reset the current HTTP session environment.       |
-| `POST /step`  | Apply one canonical `BioMedAction`.               |
+| `POST /step`  | Apply one canonical `BioMedAction`.             |
 | `GET /state`  | Return visible-only state.                        |
 | `GET /ui`     | Serve the Demo.                                   |
 
@@ -360,8 +360,8 @@ When debug mode is disabled, hidden truth is redacted to preserve the POMDP boun
 
 BioMed reward is decomposed so policies can be debugged and compared.
 
-| Component           | What it measures                                                    |
-| ------------------- | ------------------------------------------------------------------- |
+| Component             | What it measures                                                    |
+| --------------------- | ------------------------------------------------------------------- |
 | `validity`          | Whether the action is legal and executable.                         |
 | `ordering`          | Whether the action fits the current scientific workflow stage.      |
 | `info_gain`         | Whether the action produced useful uncertainty-reducing evidence.   |
@@ -424,8 +424,8 @@ python3 -m training.evaluation \
 
 Built-in baseline policies:
 
-| Policy                       | Purpose                                                       |
-| ---------------------------- | ------------------------------------------------------------- |
+| Policy                         | Purpose                                                       |
+| ------------------------------ | ------------------------------------------------------------- |
 | `random_legal`               | Samples legal actions to test contract and exploration floor. |
 | `characterize_first`         | Prioritizes sample characterization before route testing.     |
 | `cost_aware_heuristic`       | Balances evidence gathering with budget/time pressure.        |

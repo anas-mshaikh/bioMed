@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 680" role="img" aria-labelledby="title desc">
+  <title id="title">Why PET first</title>
+  <desc id="desc">Three-card infographic showing PET in bottles, food packaging, and textiles.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#07111f"/>
+      <stop offset="100%" stop-color="#10243c"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#000" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+  <rect width="1400" height="680" fill="url(#bg)"/>
+  <text x="80" y="86" fill="#f8fafc" font-family="Inter, system-ui, sans-serif" font-size="42" font-weight="800">Why PET first?</text>
+  <text x="80" y="126" fill="#cbd5e1" font-family="Inter, system-ui, sans-serif" font-size="22">A simple material with a very large real-world footprint</text>
+
+  <g filter="url(#shadow)" font-family="Inter, system-ui, sans-serif">
+    <g transform="translate(80 180)">
+      <rect width="392" height="400" rx="28" fill="#0b1726" stroke="#20324a"/>
+      <circle cx="196" cy="132" r="74" fill="#1d4ed8" opacity="0.14"/>
+      <rect x="164" y="74" width="64" height="130" rx="22" fill="#2dd4bf" opacity="0.95"/>
+      <rect x="176" y="52" width="40" height="28" rx="8" fill="#e2e8f0"/>
+      <path d="M156 144 C156 116, 236 116, 236 144" fill="none" stroke="#e2e8f0" stroke-width="8" opacity="0.8"/>
+      <text x="196" y="280" fill="#f8fafc" font-size="30" font-weight="800" text-anchor="middle">Bottles</text>
+      <text x="196" y="316" fill="#cbd5e1" font-size="18" text-anchor="middle">The most familiar PET form</text>
+      <text x="196" y="352" fill="#60a5fa" font-size="16" text-anchor="middle">high visibility, high volume</text>
+    </g>
+
+    <g transform="translate(504 180)">
+      <rect width="392" height="400" rx="28" fill="#0b1726" stroke="#20324a"/>
+      <rect x="96" y="82" width="200" height="118" rx="22" fill="#f59e0b" opacity="0.18"/>
+      <rect x="122" y="106" width="148" height="70" rx="14" fill="#f59e0b" opacity="0.88"/>
+      <rect x="138" y="88" width="116" height="26" rx="10" fill="#fde68a"/>
+      <path d="M130 144 H270" stroke="#1f2937" stroke-width="8"/>
+      <text x="196" y="280" fill="#f8fafc" font-size="30" font-weight="800" text-anchor="middle">Food packaging</text>
+      <text x="196" y="316" fill="#cbd5e1" font-size="18" text-anchor="middle">Where safety and cost matter</text>
+      <text x="196" y="352" fill="#f59e0b" font-size="16" text-anchor="middle">daily use, constant demand</text>
+    </g>
+
+    <g transform="translate(928 180)">
+      <rect width="392" height="400" rx="28" fill="#0b1726" stroke="#20324a"/>
+      <path d="M126 96 C154 68, 208 68, 236 96 C260 120, 272 168, 242 202 C214 234, 170 236, 142 204 C112 172, 104 122, 126 96Z" fill="#8b5cf6" opacity="0.18"/>
+      <path d="M152 120 C170 94, 212 94, 230 120 C248 144, 252 178, 230 198 C208 220, 174 220, 152 198 C130 178, 132 146, 152 120Z" fill="#a78bfa" opacity="0.9"/>
+      <path d="M126 238 C154 224, 238 224, 266 238" stroke="#cbd5e1" stroke-width="14" stroke-linecap="round"/>
+      <text x="196" y="280" fill="#f8fafc" font-size="30" font-weight="800" text-anchor="middle">Textiles</text>
+      <text x="196" y="316" fill="#cbd5e1" font-size="18" text-anchor="middle">A hidden PET stream at scale</text>
+      <text x="196" y="352" fill="#a78bfa" font-size="16" text-anchor="middle">polyester, fibers, microfiber loss</text>
+    </g>
+  </g>
+</svg>

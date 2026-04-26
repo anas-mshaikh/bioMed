@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 760" role="img" aria-labelledby="title desc">
+  <title id="title">Hidden state vs visible state</title>
+  <desc id="desc">Split diagram contrasting latent truth and what the agent sees publicly.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#07111f"/>
+      <stop offset="100%" stop-color="#0f2238"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+  <rect width="1500" height="760" fill="url(#bg)"/>
+  <text x="70" y="84" fill="#f8fafc" font-family="Inter, system-ui, sans-serif" font-size="42" font-weight="800">Hidden state vs visible state</text>
+  <text x="70" y="124" fill="#cbd5e1" font-family="Inter, system-ui, sans-serif" font-size="22">The agent sees evidence. The simulator keeps the truth.</text>
+
+  <g filter="url(#shadow)" font-family="Inter, system-ui, sans-serif">
+    <g transform="translate(70 180)">
+      <rect width="600" height="480" rx="30" fill="#0b1726" stroke="#ef4444"/>
+      <text x="36" y="54" fill="#fca5a5" font-size="28" font-weight="800">Latent truth</text>
+      <text x="36" y="90" fill="#cbd5e1" font-size="18">what the environment knows</text>
+      <g transform="translate(36 128)">
+        <rect width="528" height="72" rx="18" fill="#12263f" stroke="#ef4444"/>
+        <text x="24" y="45" fill="#f8fafc" font-size="24">crystallinity</text>
+      </g>
+      <g transform="translate(36 214)">
+        <rect width="528" height="72" rx="18" fill="#12263f" stroke="#ef4444"/>
+        <text x="24" y="45" fill="#f8fafc" font-size="24">contamination</text>
+      </g>
+      <g transform="translate(36 300)">
+        <rect width="528" height="72" rx="18" fill="#12263f" stroke="#ef4444"/>
+        <text x="24" y="45" fill="#f8fafc" font-size="24">thermostability bottleneck</text>
+      </g>
+      <g transform="translate(36 386)">
+        <rect width="528" height="72" rx="18" fill="#12263f" stroke="#ef4444"/>
+        <text x="24" y="45" fill="#f8fafc" font-size="24">synergy</text>
+      </g>
+    </g>
+
+    <g transform="translate(830 180)">
+      <rect width="600" height="480" rx="30" fill="#0b1726" stroke="#22c55e"/>
+      <text x="36" y="54" fill="#86efac" font-size="28" font-weight="800">Visible state</text>
+      <text x="36" y="90" fill="#cbd5e1" font-size="18">what the agent actually sees</text>
+      <g transform="translate(36 128)">
+        <rect width="528" height="72" rx="18" fill="#11263f" stroke="#22c55e"/>
+        <text x="24" y="45" fill="#f8fafc" font-size="24">assay outputs</text>
+      </g>
+      <g transform="translate(36 214)">
+        <rect width="528" height="72" rx="18" fill="#11263f" stroke="#22c55e"/>
+        <text x="24" y="45" fill="#f8fafc" font-size="24">candidate metadata</text>
+      </g>
+      <g transform="translate(36 300)">
+        <rect width="528" height="72" rx="18" fill="#11263f" stroke="#22c55e"/>
+        <text x="24" y="45" fill="#f8fafc" font-size="24">expert messages</text>
+      </g>
+      <g transform="translate(36 386)">
+        <rect width="528" height="72" rx="18" fill="#11263f" stroke="#22c55e"/>
+        <text x="24" y="45" fill="#f8fafc" font-size="24">legal actions and rewards</text>
+      </g>
+    </g>
+  </g>
+</svg>
