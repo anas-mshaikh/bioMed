@@ -1,3 +1,17 @@
+---
+title: BioMed
+emoji: "🧪"
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 8000
+base_path: /web
+pinned: false
+short_description: PET bioremediation benchmark and judge cockpit
+tags:
+  - openenv
+---
+
 # BioMed
 
 [![OpenEnv](https://img.shields.io/badge/OpenEnv-compatible-0b7285)](https://huggingface.co/docs/openenv)
@@ -30,10 +44,6 @@ For the longer narrative / Hugging Face-style writeup, see [BioMed_blog.md](BioM
 * [Collab Notebook](https://youtu.be/Ou088osqZLs?si=nL8V3o93TRpOTbbH)
 * [Problem statement video](https://drive.google.com/file/d/1Tl4btcO9BJSN1-o-DbJwHh1drMIUkOLi/view?usp=sharing)
 * [Hugging Face blog mirror](https://huggingface.co/spaces/theRake/bioMed/blob/main/BioMed_blog.md)
-
-![Training Dashboard](artifacts/training_dashboard.png)
-
-![Training Diagnostics](artifacts/training_diagnostics.png)
 
 ---
 
@@ -520,6 +530,16 @@ python -m training.evaluate_policy \
 ```
 
 Training is optional. The benchmark artifact is the environment contract, simulator, reward, evaluator, and replay system.
+
+---
+
+## Training Artifacts
+
+These screenshots are included as optional supporting evidence for training experiments. They are intentionally placed after the benchmark, UI, reward, rollout, and evaluation sections because the core submission is the OpenEnv environment itself.
+
+![Training Dashboard](artifacts/training_dashboard.png)
+
+![Training Diagnostics](artifacts/training_diagnostics.png)
 
 ---
 
