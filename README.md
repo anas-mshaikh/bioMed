@@ -24,6 +24,17 @@ BioMed is built to be judged as a benchmark artifact:
 
 For the longer narrative / Hugging Face-style writeup, see [BioMed_blog.md](BioMed_blog.md).
 
+## Links
+
+- [Project video / presentation](https://drive.google.com/file/d/1Tl4btcO9BJSN1-o-DbJwHh1drMIUkOLi/view?usp=sharing)
+- [Hugging Face blog mirror](https://huggingface.co/spaces/theRake/bioMed/blob/main/BioMed_blog.md)
+
+## Training Evidence
+
+![Training Dashboard](artifacts/training_dashboard.png)
+
+![Training Diagnostics](artifacts/training_diagnostics.png)
+
 ---
 
 ## Why This Benchmark Matters
